@@ -2480,3 +2480,33 @@ and no check was disabled or production handshake weakened.
 The PR stays draft while full verification is blocked. Windows/Linux runtime
 behavior and live Discord were not measured. Screenshots are not applicable
 because this has no visible UI change.
+
+## Niri portal timestamp compatibility (September 29, 2026)
+
+Baseline `306bccdbb4d28fa83dac09260772917d3d8b0018` and the Niri timestamp fix
+were built on the same CachyOS x86_64 host (Linux 7.2.8-1-cachyos, Ryzen 7 7800X3D,
+32 GiB RAM), using pinned Rust 1.98.1 and the locked default release configuration
+with voice and no default features. One package per revision; no repeated-size or
+CPU benchmark. Separate checkout/dist directories retained both builds. The native
+Arch package smoke checks passed for both revisions.
+
+| Metric | Baseline | Niri fix | Delta |
+| --- | ---: | ---: | ---: |
+| Executable bytes | 78,201,432 | 78,204,376 | +2,944 (+0.0038%) |
+| Installed payload bytes (.PKGINFO) | 82,646,916 | 82,649,860 | +2,944 (+0.0036%) |
+| Compressed Arch package bytes | 43,629,154 | 43,630,731 | +1,577 (+0.0036%) |
+
+The baseline executable was built by `cargo xtask package`; Debian dependency
+metadata is unavailable on this Arch host, so its packaging was completed with the
+repository's Arch packager. The final build used `cargo xtask package --format arch`.
+Sizes are filesystem byte counts and the package's installed-size metadata; tiny
+compressed deltas include packaging metadata noise and are not performance claims.
+
+The existing offline capture example reproduced constant-PTS starvation before
+the fix. Normal and Niri timestamp regression modes now require three advancing
+preview samples and five advancing video samples after secure readiness. These
+are synthetic checks, not a native Niri or Discord interoperability benchmark.
+Capture CPU, RSS, frame latency and real hardware encoder performance remain
+unmeasured: no live source was captured, and the native demo does not exercise
+portal capture. The fix adds timestamp metadata handling only on Niri portal
+frames, with no new frame queue or dependency.
