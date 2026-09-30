@@ -345,6 +345,7 @@ mod tests {
 		state.guilds = [10, 20]
 			.into_iter()
 			.map(|id| model::Guild {
+				default_message_notifications: None,
 				stickers: None,
 				id: Id(id),
 				name: "Synthetic guild".into(),
@@ -906,8 +907,11 @@ mod tests {
 			state.search = Some(crate::search::SearchView {
 				pins,
 				channel: Id(1),
+				guild: None,
 				query: "Synthetic".into(),
 				before: None,
+				offset: 0,
+				total: None,
 				pin_before: None,
 				request: 1,
 				loading: false,

@@ -167,6 +167,7 @@ account-badge-bot = NERW
 # Context: name
 account-badge-bot-description = Konto bota
 # Context: name
+account-badge-verified-bot-description = Zweryfikowane konto bota
 account-badge-webhook = WEBHOOK
 # Context: name
 account-badge-webhook-description = Autor webhooka
@@ -4090,3 +4091,22 @@ server-integrations-count-one-linked-webhook = { $count } połączony webhook
 server-integrations-count-many-linked-webhooks = Połączone webhooki: { $count }
 server-invites-revoke-title = Unieważnić zaproszenie?
 server-invites-revoke-message = Nie będzie można dołączyć do serwera przez discord.gg/{ $code }.
+
+search-page-label = Strona
+search-page-previous = Poprzednia strona
+search-page-next = Następna strona
+search-page-go = Przejdź do strony
+search-page-retry = Ponów stronę
+search-header-input-search-in = Szukaj w { $name }
+search-open-filters-in-a-specific-channel = Na określonym kanale
+search-open-filters-in-channel = w: kanał
+search-overlays-in-channel = Na kanale
+search-overlays-no-matching-channels = Brak pasujących kanałów.
+search-filters-channel-picker-choose-a-channel = Wybierz kanał
+search-filters-channel-picker-search-channels = Szukaj kanałów
+search-page-previous-short = Poprzednia
+search-page-next-short = Następna
+search-result-today-at = Dzisiaj o { $time }
+search-result-yesterday-at = Wczoraj o { $time }
+timeline-unread-banner-one-new-since = 1 nowa wiadomość od { $time }
+timeline-unread-banner-many-new-since = Nowe wiadomości od { $time }: { $count }

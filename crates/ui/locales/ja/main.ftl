@@ -171,6 +171,8 @@ account-badge-webhook = ウェブフック
 # Context: name
 account-badge-webhook-description = Webhook 作成者
 
+account-badge-verified-bot-description = 認証済みボットアカウント
+
 ## crates/ui/src/account_menu.rs
 # Context: account_identity_card
 account-menu-account-identity-card-loading-profile = プロファイルを読み込み中…
@@ -4090,3 +4092,22 @@ server-integrations-count-one-linked-webhook = 連携済みWebhook { $count }件
 server-integrations-count-many-linked-webhooks = 連携済みWebhook { $count }件
 server-invites-revoke-title = 招待を無効にしますか？
 server-invites-revoke-message = discord.gg/{ $code } ではこのサーバーに参加できなくなります。
+
+search-page-label = ページ
+search-page-previous = 前のページ
+search-page-next = 次のページ
+search-page-go = ページに移動
+search-page-retry = ページを再読み込み
+search-header-input-search-in = { $name } を検索
+search-open-filters-in-a-specific-channel = 特定のチャンネル内
+search-open-filters-in-channel = in: チャンネル
+search-overlays-in-channel = チャンネル内
+search-overlays-no-matching-channels = 一致するチャンネルはありません。
+search-filters-channel-picker-choose-a-channel = チャンネルを選択
+search-filters-channel-picker-search-channels = チャンネルを検索
+search-page-previous-short = 前へ
+search-page-next-short = 次へ
+search-result-today-at = 今日 { $time }
+search-result-yesterday-at = 昨日 { $time }
+timeline-unread-banner-one-new-since = { $time } 以降の新着メッセージ 1 件
+timeline-unread-banner-many-new-since = { $time } 以降の新着メッセージ { $count } 件

@@ -167,6 +167,7 @@ account-badge-bot = BOT
 # Context: name
 account-badge-bot-description = Bot account
 # Context: name
+account-badge-verified-bot-description = Verified bot account
 account-badge-webhook = WEBHOOK
 # Context: name
 account-badge-webhook-description = Webhook author
@@ -4091,3 +4092,38 @@ server-integrations-count-one-linked-webhook = { $count } linked webhook
 server-integrations-count-many-linked-webhooks = { $count } linked webhooks
 server-invites-revoke-title = Revoke invite?
 server-invites-revoke-message = People will no longer be able to join this server with discord.gg/{ $code }.
+server-notifications-title = Notification Settings
+server-notifications-default = Use server default
+server-notifications-default-all = Currently: all messages
+server-notifications-default-mentions = Currently: only mentions
+server-notifications-default-unknown = Server default is unavailable
+server-notifications-all = All messages
+server-notifications-mentions = Only mentions
+server-notifications-nothing = Nothing
+server-notifications-mute = Mute server
+server-notifications-everyone = Suppress @everyone and @here
+server-notifications-roles = Suppress role mentions
+server-notifications-overrides = Channel notification overrides still apply. Mute stays on until you turn it off.
+server-notifications-unknown = Some settings are unavailable. Saving changes only the options you select.
+server-notifications-offline = Reconnect to change notification settings.
+server-notifications-save = Save changes
+server-notifications-saving = Saving…
+
+search-page-label = Page
+search-page-previous = Previous page
+search-page-next = Next page
+search-page-go = Go to page
+search-page-retry = Retry page
+search-header-input-search-in = Search { $name }
+search-open-filters-in-a-specific-channel = In a specific channel
+search-open-filters-in-channel = in: channel
+search-overlays-in-channel = In Channel
+search-overlays-no-matching-channels = No matching channels.
+search-filters-channel-picker-choose-a-channel = Choose a channel
+search-filters-channel-picker-search-channels = Search channels
+search-page-previous-short = Previous
+search-page-next-short = Next
+search-result-today-at = Today at { $time }
+search-result-yesterday-at = Yesterday at { $time }
+timeline-unread-banner-one-new-since = 1 new message since { $time }
+timeline-unread-banner-many-new-since = { $count } new messages since { $time }

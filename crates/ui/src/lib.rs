@@ -33,6 +33,7 @@ mod extension_admin_actions;
 mod extension_app;
 mod extension_server_actions;
 mod extensions_ui;
+mod rich_presence;
 mod theme_editor;
 mod thread_create;
 pub use extensions_ui::{ExtensionContext, ExtensionEntry, ExtensionRequest, ExtensionUi};
@@ -82,6 +83,8 @@ mod reading;
 pub mod screen;
 pub mod scroll;
 mod search;
+#[cfg(test)]
+mod search_navigation_tests;
 pub mod select;
 mod server_admin;
 mod server_audit_log;
@@ -89,6 +92,9 @@ mod server_integrations;
 mod server_invite;
 mod server_invites;
 mod server_menu;
+#[cfg(test)]
+mod server_notification_tests;
+mod server_notifications;
 mod server_roles;
 mod server_settings;
 mod server_stickers;
@@ -815,6 +821,12 @@ impl MessagingUi {
 	#[cfg(any(test, feature = "demo"))]
 	pub fn preview_account_menu(&mut self, generation: u64) {
 		self.account_menu.preview(generation);
+	}
+	#[cfg(any(test, feature = "demo"))]
+	pub fn preview_server_notifications(&mut self, state: &mut State, guild: Id) {
+		self.guild = Some(guild);
+		self.navigation_channel = state.selected;
+		self.server_menu.open_notifications(state, guild);
 	}
 	#[cfg(any(test, feature = "demo"))]
 	pub fn preview_custom_status(&mut self, generation: u64) {
@@ -3448,6 +3460,8 @@ impl MessagingUi {
 			state,
 			&mut self.draft_changes,
 			self.editing.is_some(),
+			&mut self.avatars,
+			(self.game_activity_status, self.share_game_activity),
 		) && let Err(error) = self.apply_extension_effect(&ctx, state, effect, &mut commands)
 		{
 			self.extensions.report_error(error);
@@ -3711,6 +3725,31 @@ impl MessagingUi {
 			commands.push(command);
 		}
 		let wide_members = ui.available_width() >= 720.0;
+		if !settings_open
+			&& !self.switcher_frame
+			&& !self.ime_active
+			&& state.can_search()
+			&& ctx.memory(|memory| memory.top_modal_layer().is_none())
+			&& !egui::Popup::is_any_open(&ctx)
+			&& ctx.input(|input| {
+				input.focused
+					&& !input.events.iter().any(|event| match event {
+						egui::Event::Ime(
+							egui::ImeEvent::Preedit { text, .. } | egui::ImeEvent::Commit(text),
+						) => !text.is_empty(),
+						egui::Event::Ime(egui::ImeEvent::DeleteSurrounding { .. }) => true,
+						_ => false,
+					})
+			}) && ctx.input_mut(|input| {
+			crate::keybinds::pressed_exact(
+				input,
+				self.keybinds
+					.chord(model::KeybindAction::SearchConversation),
+			)
+		}) && let Some(channel) = state.selected
+		{
+			self.search.focus_conversation(channel);
+		}
 		self.search.sync(&ctx, state, &mut commands);
 		let search_open =
 			self.search.results_visible(state) && state.selected.is_some() && !selected_voice;
@@ -4325,6 +4364,7 @@ impl MessagingUi {
 			self.timeline.mark_read = None;
 			if !settings_open && let Some(command) = state.prepare_mark_unread(message) {
 				self.timeline.browse_away();
+				self.timeline.reset_unread_divider();
 				commands.push(command);
 			}
 		} else if let Some(message) = self.timeline.mark_read.take() {
@@ -4902,6 +4942,7 @@ mod composer_tests {
 		let mut state = edit_state();
 		state.demo = false;
 		state.guilds.push(model::Guild {
+			default_message_notifications: None,
 			stickers: None,
 			id: Id(100),
 			name: "Synthetic invited server".into(),
@@ -5043,6 +5084,7 @@ mod composer_tests {
 			target.kind = 0;
 			state.channels.push(target);
 			state.guilds.push(model::Guild {
+				default_message_notifications: None,
 				stickers: None,
 				id: Id(100),
 				name: "Linked server".into(),

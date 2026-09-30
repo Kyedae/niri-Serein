@@ -1,3 +1,45 @@
+# Custom Rich Presence - September 28, 2026
+
+Baseline `5dd38dde6432e7efe4484c450652a9c8849ec357`, compared with
+`dcbc431b75adb5f03ce717c792610e0b8457db0b` on Windows 11 Home 10.0.26200,
+Ryzen 7 7800X3D, 31.1 GiB RAM, pinned Rust 1.98.1. The updated revision includes
+main's merged artwork fallback PR #442, so this is the complete branch delta,
+not an isolated attribution of every byte to Custom RPC.
+
+Both standard voice-enabled `cargo xtask package` builds passed with locked
+dependencies and no demo/developer features. Baseline and changed `dist` folders
+were separate. Complete portable ZIPs use .NET `ZipFile`, `CompressionLevel.Optimal`.
+NSIS was unavailable, so installer executables were not generated.
+
+| Metric / method | Baseline | After | Delta |
+| --- | ---: | ---: | ---: |
+| Desktop executable bytes | 76,765,184 | 77,372,928 | +607,744 / +0.792% |
+| Installed package bytes | 80,868,500 | 81,476,244 | +607,744 / +0.752% |
+| Portable ZIP bytes | 44,197,608 | 44,345,286 | +147,678 / +0.334% |
+| Synthetic reducer 100,000 events, median | 142.9011 ms | 142.4239 ms | -0.4772 ms / -0.334%; noise |
+| Retained timeline estimate / rows | 331,992..332,477 bytes / 500 | 331,992..332,477 bytes / 500 | Unchanged |
+
+Reducer method: build `replay-bench` once per revision with `--release --locked`,
+then run the executable directly for one warmup and five measured samples.
+Baseline range: 134.9423..150.2501 ms; after: 132.1846..152.1863 ms. Other task
+builds ran on this machine; the distributions overlap and no speedup is claimed.
+This is not RSS, UI latency or live Discord interoperability. Native CPU/memory,
+startup/frame timing and scripted keyboard/scrolling verification remain
+unmeasured because the native automation helper is unavailable.
+
+The bundled plugin is 404,606 bytes (SHA-256
+`aa4ac3855855708e65430e73000eda62b176301b47cc79ecad10bc4889cb05b0`).
+The editor reuses native widgets and background artwork resolution. Configuration
+and resolved activity are each capped at 3 KiB; latest requests replace earlier
+ones. The combined Gateway event has a 4-KiB budget and omits secondary Spotify
+when necessary, retaining the existing rate limit. These are enforced bounds,
+not runtime measurements.
+
+Earlier builds hit disk/paging-file exhaustion and LLVM out-of-memory; serialized
+retries passed after resource pressure eased. A reused baseline extension artifact
+was invalidated before the changed release build. Final `cargo xtask check`
+passed with 1,159 passing test executions, strict Clippy and policy checks.
+
 # Native-first plugin artwork fallback - September 26, 2026
 
 Baseline `48e442715a0db51f54eedfabd99d1f8dba4369a3`, compared with `5f4dfdb` on
@@ -2270,6 +2312,31 @@ polling and preserve the one-request, 4 KiB response and 512-pixel media bounds.
 Native interaction screenshots and CPU/RSS measurements remain unavailable:
 the Computer Use module could not connect to its native pipe (`os error 2`).
 
+## Custom Rich Presence editor and catalog follow-up (September 28, 2026)
+
+Final source `e4a7c8c524a1e0f6eaf1b6b873284ccb8454d2d9` removes the shipped
+plugin from the client binary and uses the separately published Serein-extensions
+package. The standard voice-enabled release package passed on the same Windows
+machine/toolchain as above. NSIS remains unavailable; the complete portable ZIP
+uses .NET ZipFile with Optimal compression and no enclosing folder.
+
+| Package metric, bytes | Original baseline `5dd38dde` | Final | Delta |
+| --- | ---: | ---: | ---: |
+| Executable | 76,765,184 | 76,983,808 | +218,624 |
+| Installed directory | 80,868,500 | 81,087,124 | +218,624 |
+| Portable ZIP | 44,197,608 | 44,282,657 | +85,049 |
+
+Compared with the previous Custom RPC build `dcbc431b`, executable and installed
+size decrease by 389,120 bytes; ZIP size decreases by 62,629 bytes. This is a
+package-size measurement, not a runtime speed or memory claim. No new reducer
+measurement was needed for this UI/package-only follow-up.
+
+The native helper is now available: dark 1120x900 and light 800x760 synthetic
+windows were inspected, with section navigation, editable text, scrolling and
+composer-button absence checked. Captures are in `docs/pr-evidence/custom-rpc/`
+(`native-after.jpg`, `native-light.jpg`, `native-scrolled.jpg`). A matched native
+before capture was not collected. CPU/RSS/frame timing and live Discord
+interoperability remain unmeasured.
 ## RAM allocation audit — September 28, 2026
 
 This audit separates live application allocations, allocator retention, process RSS,
@@ -2480,6 +2547,148 @@ and no check was disabled or production handshake weakened.
 The PR stays draft while full verification is blocked. Windows/Linux runtime
 behavior and live Discord were not measured. Screenshots are not applicable
 because this has no visible UI change.
+
+## Per-server notification settings — September 29, 2026
+
+Baseline `306bccdbb4d28fa83dac09260772917d3d8b0018`; after is the
+server-notification-settings implementation. Same Apple M1, 16 GiB RAM,
+macOS 27.0, Rust 1.98.1 (Homebrew), pinned lockfile and release profile.
+Both standard packages include voice with default/demo features disabled and
+passed `cargo xtask package`, including local ad-hoc signing verification.
+The baseline package was built and preserved at this exact commit earlier in
+this delivery session for issue #452; its verified artifact was reused. The
+changed package was rebuilt here. Both have the same 205 file paths. Installed
+size sums file bytes; complete `dist` directories were compressed separately
+with `ditto -c -k --sequesterRsrc`, without an enclosing directory.
+
+`cargo replay` builds the unchanged synthetic reducer workload. The baseline
+binary was built from a disposable worktree at the recorded commit and preserved
+before changes. Final direct runs alternate the two binaries, reversing order
+on each pair: one warmup and five measured runs per revision. Host scheduling
+remains uncontrolled. This is reducer elapsed time and retained timeline accounting,
+not process memory, notification delivery latency or UI frame time.
+
+| Metric / method | Baseline | After | Delta |
+| --- | ---: | ---: | ---: |
+| Executable, bytes | 61,003,216 | 61,036,080 | +32,864 / +0.0539% |
+| Installed package, bytes | 67,010,408 | 67,043,272 | +32,864 / +0.0490% |
+| ZIP distribution, bytes | 42,809,900 | 42,822,815 | +12,915 / +0.0302% |
+| Reducer median, ms / 100,000 events | 172.244000 | 163.930750 | -8.313250 / -4.83% |
+| Retained timeline, estimated bytes / records | 331,992–332,477 / 500 | 331,992–332,477 / 500 | Unchanged |
+
+Five measured samples per revision:
+
+- baseline: 160.914292, 162.024583, 174.693666, 172.244000, 173.763500 ms.
+- after: 163.401625, 160.369042, 178.079000, 173.128042, 163.930750 ms.
+
+The ranges overlap and the baseline itself drifted from a pre-edit median of
+154.611708 ms (five runs: 156.027625, 154.611708, 155.423708, 154.219167,
+152.081875; warmup 196.209500) to 172.244000 ms during paired sampling.
+The observed median difference does not establish a performance improvement.
+Paired warmups were 161.528041 ms baseline and 161.668084 ms after. Retained
+bounds are unchanged. No dependencies, runtime assets or bundled notices changed.
+
+Native synthetic renders were inspected in dark/light mode on Metal at a
+1120×760 viewport and 2× display scale. Headless input tests cover a 320×550
+viewport and scrolling. Native OS input automation was unavailable
+(`AXIsProcessTrusted=false`; targeted event posting had no effect), so matched
+interaction CPU/RSS, startup and p95 frame timing remain unmeasured; no UI
+performance claim. Live Discord and Windows/Linux behavior were not exercised.
+The PR remains draft for this missing native evidence.
+
+`cargo xtask check` passed (911 tests, 23 ignored; formatting, strict Clippy,
+standard app check and policy checks), as did the focused notification/API/UI
+checks, final demo build and standard release package.
+
+## Search navigation — September 29, 2026
+
+Baseline: `306bccdbb4d28fa83dac09260772917d3d8b0018`; after: this search-navigation
+change. macOS 27.0, Apple M1, 16 GiB RAM, pinned Rust 1.98.1. Both standard
+`cargo xtask package` builds include voice and omit demo/developer features.
+Separate copies of the complete `dist` directories were measured: executable
+file length, sum of installed regular-file lengths, and ZIP size from
+`ditto -c -k --sequesterRsrc DIST OUTPUT.zip`. Both contain 205 files.
+These are locally signed packages, not notarized releases.
+
+After building each revision with `cargo replay`, `target/release/replay-bench`
+ran once for warmup and five times for measurement. Each run processes 100,000
+synthetic reducer events; this is not a search-latency benchmark.
+
+| Metric / method | Baseline | After | Delta |
+| --- | ---: | ---: | ---: |
+| Executable, bytes | 61,003,216 | 61,019,632 | +16,416 / +0.027% |
+| Full installed package, bytes | 67,010,408 | 67,026,824 | +16,416 / +0.024% |
+| ZIP distribution, bytes | 42,809,900 | 42,817,252 | +7,352 / +0.017% |
+| 100,000-event reducer median, ms | 164.532 | 214.415 | +49.882 / +30.32% |
+| Alternating baseline/after reducer control, median ms | 223.211 | 223.475 | +0.264 / +0.12% |
+| Retained timeline, estimated bytes | 331,992–332,477 | 331,992–332,477 | Unchanged; 500 records |
+
+Measured replay samples, milliseconds:
+
+- Baseline: 164.208291, 165.308000, 164.532041, 163.146209, 169.510250.
+- After: 214.414500, 210.785000, 215.487125, 217.813542, 205.935208.
+
+The initial sequential samples showed +30.32% elapsed time. To investigate,
+the exact baseline replay was rebuilt in a clean worktree, preserving the changed
+binary. Each binary then received one warmup and five measured runs, alternating
+baseline/after order each pair. Baseline was 221.487–244.230 ms;
+after was 220.689–244.861 ms. Medians differed by +0.12%
+with overlapping ranges. The baseline slowdown in the later control demonstrates
+substantial run-to-run host variation; the initial +30.32% is not established as
+a code regression. Neither comparison establishes a speed improvement.
+
+Alternating control samples, milliseconds:
+
+- Baseline: 244.230333, 221.487167, 223.256500, 221.950292, 223.210833.
+- After: 233.071917, 244.860625, 221.811375, 223.474584, 220.689167.
+
+Retained timeline estimates are not process RSS. Dependencies, licenses and
+bundled notices are unchanged.
+
+Native before/after captures used debug `--features demo` builds, launched with
+`--demo --demo-search=synthetic`, at the same 1120×760 viewport and 2× display
+scale on the Metal renderer. Native input automation was unavailable:
+`AXIsProcessTrusted=false`, and targeted event posting had no effect. Matched
+native interaction CPU/RSS, startup and p95 frame timing are therefore unmeasured;
+no UI speed or memory claim is made. Headless egui tests exercise keyboard/click
+input and narrow light/dark pager layouts, but do not validate OS input routing.
+Screenshots contain only synthetic app content and are development evidence,
+not bundled assets. No live-account or audio-device workload was run.
+
+## Complete large-guild subscriptions — September 29, 2026
+
+Baseline: `400ac8cb060757b6b775284356324f22e5968158`; after: this
+large-guild subscription change. Windows 11 Home 10.0.26200, AMD Ryzen 7
+7800X3D, 31.1 GiB RAM, pinned Rust toolchain. Both revisions used the standard
+`cargo xtask package` command. `makensis` was unavailable, so the command
+produced the unsigned package executable and complete `dist` directory but no
+Windows installer. Separate ZIPs were created from each complete `dist`
+directory with .NET `ZipFile` optimal compression and no enclosing directory.
+
+After building each revision with `cargo replay`, its `replay-bench.exe` ran
+once for warmup and five times for measurement. Each run processes 100,000
+synthetic reducer events; the changed gateway subscription packet is outside
+this workload.
+
+| Metric / method | Baseline | After | Delta |
+| --- | ---: | ---: | ---: |
+| Executable, bytes | 77,560,832 | 77,560,832 | Unchanged |
+| Full installed package, bytes / files | 81,664,148 / 198 | 81,664,148 / 198 | Unchanged |
+| ZIP distribution, bytes | 44,510,112 | 44,510,240 | +128 / +0.0003% |
+| 100,000-event reducer median, ms | 133.5614 | 130.6347 | -2.9267 / -2.19% |
+| Retained timeline, estimated bytes / records | 331,992–332,477 / 500 | 331,992–332,477 / 500 | Unchanged |
+
+Measured replay samples, milliseconds:
+
+- Baseline: 131.9832, 130.0590, 133.5614, 142.3409, 139.4035.
+- After: 126.1190, 130.6347, 133.9218, 126.7004, 135.1862.
+
+The samples overlap, so the median difference does not establish a speed
+improvement. The 128-byte ZIP difference with identical installed files is
+archive metadata variation, not package growth. Retained timeline estimates
+are not process RSS. No dependency, bundled asset, or license changed. This is
+a nonvisual gateway packet fix, so screenshots and renderer measurements are
+not applicable. Live large-guild acceptance remains unverified.
 
 ## Niri portal timestamp compatibility (September 29, 2026)
 

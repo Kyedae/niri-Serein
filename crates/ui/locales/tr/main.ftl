@@ -171,6 +171,8 @@ account-badge-webhook = web kancası
 # Context: name
 account-badge-webhook-description = Web kancası yazarı
 
+account-badge-verified-bot-description = Doğrulanmış bot hesabı
+
 ## crates/ui/src/account_menu.rs
 # Context: account_identity_card
 account-menu-account-identity-card-loading-profile = Profil yükleniyor…
@@ -4090,3 +4092,22 @@ server-integrations-count-one-linked-webhook = { $count } bağlı webhook
 server-integrations-count-many-linked-webhooks = { $count } bağlı webhook
 server-invites-revoke-title = Davet iptal edilsin mi?
 server-invites-revoke-message = discord.gg/{ $code } ile bu sunucuya artık katılınamayacak.
+
+search-page-label = Sayfa
+search-page-previous = Önceki sayfa
+search-page-next = Sonraki sayfa
+search-page-go = Sayfaya git
+search-page-retry = Sayfayı yeniden dene
+search-header-input-search-in = { $name } içinde ara
+search-open-filters-in-a-specific-channel = Belirli bir kanalda
+search-open-filters-in-channel = içinde: kanal
+search-overlays-in-channel = Kanalda
+search-overlays-no-matching-channels = Eşleşen kanal yok.
+search-filters-channel-picker-choose-a-channel = Bir kanal seç
+search-filters-channel-picker-search-channels = Kanallarda ara
+search-page-previous-short = Önceki
+search-page-next-short = Sonraki
+search-result-today-at = Bugün { $time }
+search-result-yesterday-at = Dün { $time }
+timeline-unread-banner-one-new-since = { $time } itibarıyla 1 yeni mesaj
+timeline-unread-banner-many-new-since = { $time } itibarıyla { $count } yeni mesaj

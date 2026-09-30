@@ -109,6 +109,7 @@ impl User {
 		match (self.kind, self.webhook) {
 			(AccountKind::App, _) => Some("APP"),
 			(_, true) => Some("WEBHOOK"),
+			(AccountKind::VerifiedBot, _) => Some("APP"),
 			(AccountKind::Bot, _) => Some("BOT"),
 			_ => None,
 		}
@@ -160,6 +161,7 @@ pub enum AccountKind {
 	Human = 0,
 	Bot = 1,
 	App = 2,
+	VerifiedBot = 3,
 }
 /// Locally remembered account for the switcher: identity only, never a token.
 /// Tokens stay in the OS credential store under their own per-account entry.
@@ -231,6 +233,8 @@ impl InvitePreview {
 }
 #[derive(Clone, PartialEq, Eq)]
 pub struct Guild {
+	/// Service default: 0 = all messages, 1 = mentions; absent/invalid stays unknown.
+	pub default_message_notifications: Option<u8>,
 	pub stickers: Option<Vec<Sticker>>,
 	pub emojis: Option<Vec<CustomEmoji>>,
 	pub id: Id,
@@ -254,6 +258,7 @@ impl Guild {
 }
 #[derive(Clone)]
 pub struct GuildPatch {
+	pub default_message_notifications: Patch<u8>,
 	pub id: Id,
 	pub name: Patch<String>,
 	pub icon: Patch<String>,
@@ -578,7 +583,7 @@ pub struct RichActivity {
 	pub small_image: Option<ActivityImage>,
 	/// Unix milliseconds, as supplied by the activity producer.
 	pub started_at: Option<u64>,
-	/// Track end in Unix milliseconds; absent when duration is unknown.
+	/// Activity end in Unix milliseconds; may be present without a start for a countdown.
 	pub ends_at: Option<u64>,
 }
 pub const MAX_ACTIVITY_TIMESTAMP: u64 = 9_007_199_254_740_991;
@@ -594,7 +599,7 @@ impl RichActivity {
 				.started_at
 				.is_none_or(|at| at <= MAX_ACTIVITY_TIMESTAMP)
 			&& self.ends_at.is_none_or(|end| {
-				end <= MAX_ACTIVITY_TIMESTAMP && self.started_at.is_some_and(|start| end > start)
+				end <= MAX_ACTIVITY_TIMESTAMP && self.started_at.is_none_or(|start| end > start)
 			})
 	}
 	pub fn heap_bytes(&self) -> usize {
@@ -889,6 +894,14 @@ mod presence_tests {
 		allocated.started_at = Some(MAX_ACTIVITY_TIMESTAMP + 1);
 		assert!(!allocated.valid());
 		allocated.started_at = None;
+		allocated.ends_at = Some(1000);
+		assert!(allocated.valid());
+		allocated.started_at = Some(1000);
+		assert!(!allocated.valid());
+		allocated.started_at = None;
+		allocated.ends_at = Some(MAX_ACTIVITY_TIMESTAMP + 1);
+		assert!(!allocated.valid());
+		allocated.ends_at = None;
 		allocated.small_image = Some(ActivityImage::Proxy("external/../secret".into()));
 		assert!(!allocated.valid());
 	}

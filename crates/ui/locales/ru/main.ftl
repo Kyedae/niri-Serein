@@ -171,6 +171,8 @@ account-badge-webhook = ВЕБХУК
 # Context: name
 account-badge-webhook-description = Автор вебхука
 
+account-badge-verified-bot-description = Проверенный бот-аккаунт
+
 ## crates/ui/src/account_menu.rs
 # Context: account_identity_card
 account-menu-account-identity-card-loading-profile = Загрузка профиля…
@@ -4090,3 +4092,22 @@ server-integrations-count-one-linked-webhook = Связанных вебхуко
 server-integrations-count-many-linked-webhooks = Связанных вебхуков: { $count }
 server-invites-revoke-title = Отозвать приглашение?
 server-invites-revoke-message = По ссылке discord.gg/{ $code } больше нельзя будет присоединиться к серверу.
+
+search-page-label = Страница
+search-page-previous = Предыдущая страница
+search-page-next = Следующая страница
+search-page-go = Перейти к странице
+search-page-retry = Повторить загрузку
+search-header-input-search-in = Искать в { $name }
+search-open-filters-in-a-specific-channel = В определённом канале
+search-open-filters-in-channel = в: канал
+search-overlays-in-channel = В канале
+search-overlays-no-matching-channels = Нет подходящих каналов.
+search-filters-channel-picker-choose-a-channel = Выберите канал
+search-filters-channel-picker-search-channels = Искать каналы
+search-page-previous-short = Назад
+search-page-next-short = Далее
+search-result-today-at = Сегодня в { $time }
+search-result-yesterday-at = Вчера в { $time }
+timeline-unread-banner-one-new-since = 1 новое сообщение с { $time }
+timeline-unread-banner-many-new-since = Новые сообщения с { $time }: { $count }

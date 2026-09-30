@@ -1679,8 +1679,11 @@ mod tests {
 		state.search = Some(client_core::search::SearchView {
 			pins: true,
 			channel,
+			guild: None,
 			query: String::new(),
 			before: None,
+			offset: 0,
+			total: None,
 			pin_before: None,
 			request: 0,
 			loading: false,

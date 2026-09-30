@@ -167,6 +167,7 @@ account-badge-bot = ROBÔ
 # Context: name
 account-badge-bot-description = Conta de bot
 # Context: name
+account-badge-verified-bot-description = Conta de bot verificada
 account-badge-webhook = WEBHOOK
 # Context: name
 account-badge-webhook-description = Autor do webhook
@@ -4090,3 +4091,22 @@ server-integrations-count-one-linked-webhook = { $count } webhook vinculado
 server-integrations-count-many-linked-webhooks = { $count } webhooks vinculados
 server-invites-revoke-title = Revogar convite?
 server-invites-revoke-message = Não será mais possível entrar no servidor com discord.gg/{ $code }.
+
+search-page-label = Página
+search-page-previous = Página anterior
+search-page-next = Próxima página
+search-page-go = Ir para a página
+search-page-retry = Tentar página novamente
+search-header-input-search-in = Pesquisar em { $name }
+search-open-filters-in-a-specific-channel = Em um canal específico
+search-open-filters-in-channel = em: canal
+search-overlays-in-channel = No canal
+search-overlays-no-matching-channels = Nenhum canal correspondente.
+search-filters-channel-picker-choose-a-channel = Escolha um canal
+search-filters-channel-picker-search-channels = Pesquisar canais
+search-page-previous-short = Anterior
+search-page-next-short = Próxima
+search-result-today-at = Hoje às { $time }
+search-result-yesterday-at = Ontem às { $time }
+timeline-unread-banner-one-new-since = 1 nova mensagem desde { $time }
+timeline-unread-banner-many-new-since = { $count } novas mensagens desde { $time }

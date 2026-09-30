@@ -167,6 +167,7 @@ account-badge-bot = BOT
 # Context: name
 account-badge-bot-description = Bot účet
 # Context: name
+account-badge-verified-bot-description = Ověřený bot účet
 account-badge-webhook = WEBHOOK
 # Context: name
 account-badge-webhook-description = Autor webhooku
@@ -4090,3 +4091,38 @@ server-integrations-count-one-linked-webhook = { $count } propojený webhook
 server-integrations-count-many-linked-webhooks = Propojené webhooky: { $count }
 server-invites-revoke-title = Zrušit pozvánku?
 server-invites-revoke-message = Pomocí discord.gg/{ $code } se už k tomuto serveru nepůjde připojit.
+server-notifications-title = Nastavení oznámení
+server-notifications-default = Použít výchozí nastavení serveru
+server-notifications-default-all = Aktuálně: všechny zprávy
+server-notifications-default-mentions = Aktuálně: pouze zmínky
+server-notifications-default-unknown = Výchozí nastavení serveru není dostupné
+server-notifications-all = Všechny zprávy
+server-notifications-mentions = Pouze zmínky
+server-notifications-nothing = Nic
+server-notifications-mute = Ztlumit server
+server-notifications-everyone = Potlačit @everyone a @here
+server-notifications-roles = Potlačit zmínky rolí
+server-notifications-overrides = Výjimky oznámení pro kanály stále platí. Ztlumení zůstane zapnuté, dokud ho nevypnete.
+server-notifications-unknown = Některá nastavení nejsou dostupná. Uložením se změní pouze možnosti, které vyberete.
+server-notifications-offline = Pro změnu nastavení oznámení se znovu připojte.
+server-notifications-save = Uložit změny
+server-notifications-saving = Ukládání…
+
+search-page-label = Stránka
+search-page-previous = Předchozí stránka
+search-page-next = Další stránka
+search-page-go = Přejít na stránku
+search-page-retry = Zkusit stránku znovu
+search-header-input-search-in = Hledat v { $name }
+search-open-filters-in-a-specific-channel = V konkrétním kanálu
+search-open-filters-in-channel = v: kanál
+search-overlays-in-channel = V kanálu
+search-overlays-no-matching-channels = Žádné odpovídající kanály.
+search-filters-channel-picker-choose-a-channel = Vyberte kanál
+search-filters-channel-picker-search-channels = Hledat kanály
+search-page-previous-short = Předchozí
+search-page-next-short = Další
+search-result-today-at = Dnes v { $time }
+search-result-yesterday-at = Včera v { $time }
+timeline-unread-banner-one-new-since = 1 nová zpráva od { $time }
+timeline-unread-banner-many-new-since = Nové zprávy od { $time }: { $count }

@@ -16,6 +16,8 @@ pub use serde_json;
 use std::{collections::BTreeMap, fmt, io, str::FromStr};
 mod discovery;
 pub use discovery::*;
+mod rich_presence;
+pub use rich_presence::*;
 mod conversation_activity;
 pub use conversation_activity::*;
 mod message_content;
@@ -53,6 +55,16 @@ pub struct Invocation {
 	pub storage: Option<String>,
 	#[serde(default)]
 	pub values: BTreeMap<String, String>,
+}
+
+/// Opt-in scheduled appearance context, preserving the original `Invocation` API.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TickInvocation {
+	#[serde(flatten)]
+	pub invocation: Invocation,
+	/// Set only for a `tick` action; panel actions decoded by the same handler receive `None`.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub tick_ms: Option<u64>,
 }
 
 /// Opt-in message-event context, preserving the original `Invocation` struct literal API.
@@ -139,6 +151,9 @@ impl Output {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Element {
+	ActivityPreview {
+		presence: Box<CustomRichPresence>,
+	},
 	Text {
 		text: String,
 	},

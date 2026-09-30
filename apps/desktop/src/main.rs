@@ -1150,6 +1150,11 @@ fn demo_members(guild: Option<model::Id>, channel: model::Id, request: u64) -> m
 			let mut member = members[0].clone();
 			member.user.id = model::Id(id);
 			member.user.name = name.into();
+			member.user.kind = if id == 9003 {
+				model::AccountKind::VerifiedBot
+			} else {
+				model::AccountKind::Bot
+			};
 			member.roles.clear();
 			member.status = Some(status.into());
 			members.push(member);
@@ -1898,6 +1903,15 @@ impl Desktop {
 		#[cfg(feature = "demo")]
 		if demo && std::env::args().any(|arg| arg == "--demo-server-settings") {
 			server_settings_demo::open(&mut state, &mut messaging);
+		}
+		#[cfg(feature = "demo")]
+		if demo
+			&& std::env::args().any(|arg| arg == "--demo-server-notifications")
+			&& let Some(guild) = state.guilds.first().map(|g| g.id)
+		{
+			// The new editor fixture includes a known server default: mentions only.
+			state.guilds[0].default_message_notifications = Some(1);
+			messaging.preview_server_notifications(&mut state, guild);
 		}
 		let mut hotkeys = platform::hotkeys::Hotkeys::new({
 			let ctx = cc.egui_ctx.clone();
@@ -2686,6 +2700,15 @@ impl Desktop {
 		let mut own_activity = None;
 		self.messaging.game_activity_status = self.game_activity.status();
 		if let Some(connection) = &self.connection {
+			let custom_changed = self.extensions.take_rich_presence_change();
+			let custom = self.extensions.rich_presence();
+			connection.custom_rich_presence.send_if_modified(|current| {
+				if !custom_changed && current.as_ref() == custom {
+					return false;
+				}
+				*current = custom.cloned();
+				true
+			});
 			connection.share_activity.send_if_modified(|enabled| {
 				if *enabled == self.game_activity.enabled {
 					return false;
@@ -3499,6 +3522,7 @@ impl Desktop {
 					channel,
 					query,
 					before,
+					offset,
 					request,
 					..
 				} => {
@@ -3508,11 +3532,17 @@ impl Desktop {
 						Ok(terms) => terms,
 						Err(_) => return,
 					};
+					// Fixture IDs repeat per channel, so an offline search reads one channel.
+					let source = filters
+						.iter()
+						.find_map(|(key, value)| (*key == "channel_id").then(|| value.parse().ok()))
+						.flatten()
+						.map_or(channel, model::Id);
 					for id in (1..=500)
 						.rev()
 						.filter(|id| before.is_none_or(|b| *id < b.0))
 					{
-						let message = test_support::message(id, channel);
+						let message = test_support::message(id, source);
 						if message
 							.content
 							.to_lowercase()
@@ -3521,6 +3551,7 @@ impl Desktop {
 								filters.iter().filter(|(key, _)| key == group).any(
 									|(key, value)| match *key {
 										"author_id" => message.author.id.to_string() == *value,
+										"channel_id" => source.to_string() == *value,
 										"mentions" => message
 											.mentions
 											.iter()
@@ -3532,7 +3563,7 @@ impl Desktop {
 											value.parse::<u64>().is_ok_and(|max| message.id.0 < max)
 										}
 										"pinned" => {
-											self.state.is_pinned(channel, message.id)
+											self.state.is_pinned(source, message.id)
 												== (value == "true")
 										}
 										"author_type" => match value.as_str() {
@@ -3565,10 +3596,10 @@ impl Desktop {
 								)
 							}) {
 							total += 1;
-							if hits.len() < model::SEARCH_PAGE_SIZE {
+							if total > u64::from(offset) && hits.len() < model::SEARCH_PAGE_SIZE {
 								hits.push(model::SearchHit {
 									id: message.id,
-									channel,
+									channel: source,
 									author: message.author,
 									mentions: message.mentions,
 									excerpt: message.content.clone(),
@@ -3610,6 +3641,7 @@ impl Desktop {
 					user,
 					guild,
 					request,
+					..
 				} => Event::Profile {
 					user,
 					guild,
@@ -5597,7 +5629,6 @@ impl eframe::App for Desktop {
 		self.sync_fonts(ctx);
 		self.hotkeys.sync(&self.messaging.keybinds, &self.runtime);
 		self.messaging.global_keybind_status = self.hotkeys.status();
-		self.hotkeys.poll();
 		let voice_toggles = self.hotkeys.take_toggle_pending()
 			| self
 				.messaging
