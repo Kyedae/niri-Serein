@@ -1264,7 +1264,7 @@ impl MessagingUi {
 				.is_some_and(|channel| channel.kind == 3)
 			&& (list.freshness == Freshness::Fresh || has_entry)
 		{
-			let text = format!("{} — {}", language.text("members-count"), list.total);
+			let text = format!("{} — {}", language.text("members-heading"), list.total);
 			egui::Frame::new()
 				.inner_margin(egui::Margin::same(8))
 				.show(ui, |ui| {
@@ -6712,6 +6712,9 @@ mod composer_tests {
 		};
 		assert_eq!(state.channel(channel).unwrap().recipients.len(), 2);
 		assert!(render(&mut view, &mut state, 240.0).contains(&"Members — 3".into()));
+		view.language = i18n::Language::Czech;
+		assert!(render(&mut view, &mut state, 240.0).contains(&"Členové — 3".into()));
+		view.language = i18n::Language::English;
 		let mut user = test_support::message(9, channel).author;
 		user.id = Id(90001);
 		state.apply(client_core::Envelope {
