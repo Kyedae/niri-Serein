@@ -1313,6 +1313,11 @@ impl Desktop {
 			};
 		}
 		#[cfg(feature = "demo")]
+		if demo && std::env::args().any(|arg| arg == "--demo-group-dm") {
+			// Existing synthetic group conversation; no account or call is opened.
+			let _ = state.select(model::Id(29));
+		}
+		#[cfg(feature = "demo")]
 		if demo && std::env::args().any(|arg| arg == "--demo-voice-failed") {
 			let call = state
 				.voice
