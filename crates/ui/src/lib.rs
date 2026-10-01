@@ -113,6 +113,7 @@ mod title_bar_tests;
 pub mod toasts;
 mod typing;
 pub mod updates;
+mod user_direct;
 mod user_menu;
 mod verification;
 mod voice;
@@ -297,6 +298,7 @@ pub struct MessagingUi {
 	/// slider does not rescale under the cursor mid-drag.
 	reading_zoom_draft: Option<u16>,
 	friend_removal: Option<(u64, model::User)>,
+	user_direct: Option<user_direct::Pending>,
 	members_narrow_open: bool,
 	/// Only the open member request's revealed prefix; member data stays in the bounded core cache.
 	member_extent: Option<((u64, Id, u64), usize)>,
@@ -3633,9 +3635,11 @@ impl MessagingUi {
 			self.switcher.open(&ctx);
 		}
 		self.switcher_frame = self.switcher.is_open();
+		let direct_origin = (state.selected, state.request);
 		if let Some(command) = state.select_opened_dm() {
 			commands.push(command);
 		}
+		self.finish_user_direct(state, direct_origin, &mut commands);
 		self.finish_slash_direct(state);
 		if let Some(target) = self.switcher.show(&ctx, state, &mut self.avatars) {
 			match target {
@@ -4518,6 +4522,14 @@ impl MessagingUi {
 		}
 		if let Some(action) = self.user_action.take().or(self.timeline.user_action.take()) {
 			let command = match action {
+				user_menu::Action::Message(user) => {
+					self.open_user_direct(state, user, user_direct::Intent::Message, &mut commands);
+					None
+				}
+				user_menu::Action::StartCall(user) => {
+					self.open_user_direct(state, user, user_direct::Intent::Call, &mut commands);
+					None
+				}
 				user_menu::Action::Note(user) => {
 					self.profile.hide();
 					self.contact_editor.open(user, false, state)
@@ -4556,7 +4568,7 @@ impl MessagingUi {
 			self.sync_profile(state, &mut commands, &user, profile_guild);
 			let anchor = self.profile.anchor_or_place(&ctx, user.id);
 			self.profile.ingest_opener_rect(&ctx);
-			match profiles::show(
+			match profiles::show_with_session(
 				ui,
 				&user,
 				state.profile.as_ref(),
@@ -4566,6 +4578,7 @@ impl MessagingUi {
 				&mut self.profile_formatted,
 				self.reading_preferences.confirm_external_links,
 				anchor,
+				&mut self.profile,
 			) {
 				Some(profiles::Action::Avatar(media)) => {
 					let ext = media
@@ -4652,13 +4665,13 @@ impl MessagingUi {
 						commands.push(command);
 					}
 				}
-				Some(profiles::Action::Message(channel)) => {
-					self.profile.close();
-					if self.server_settings.navigate_away(state)
-						&& let Some(command) = state.select(channel)
-					{
-						commands.push(command);
-					}
+				Some(profiles::Action::SendMessage { user, content }) => {
+					self.open_user_direct(
+						state,
+						user,
+						user_direct::Intent::Send(content),
+						&mut commands,
+					);
 				}
 				None => {}
 			}
