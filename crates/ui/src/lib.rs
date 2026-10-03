@@ -3524,6 +3524,7 @@ impl MessagingUi {
 			data.remove::<egui::Rect>(profiles::profile_opener_id());
 		});
 		let ctx = ui.ctx().clone();
+		user_menu::set_voice_available(&ctx, self.voice_available);
 		self.extensions.reset_theme_shortcut(&ctx);
 		if self.extensions.has_result() {
 			self.settings.open = false;

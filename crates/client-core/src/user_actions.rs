@@ -618,7 +618,15 @@ impl State {
 	}
 	pub fn open_friend_dm(&mut self, user: Id) -> Option<Command> {
 		let friend = self.friend(user)?;
-		if friend.webhook || !self.dm_target_allowed(user, true) {
+		if friend.webhook || user.0 == 0 || self.user.as_ref().is_none_or(|owner| owner.id == user)
+		{
+			return None;
+		}
+		// A loaded friend DM stays navigable while the session reconnects; only creation needs it.
+		if let Some(channel) = self.existing_dm(user) {
+			return self.select(channel);
+		}
+		if !self.dm_target_allowed(user, true) {
 			return None;
 		}
 		self.open_dm(user, true)
@@ -641,15 +649,21 @@ impl State {
 			&& (!friend_only || self.friend(user).is_some())
 			&& (self.demo || (self.auth == AuthState::Authenticated && self.gateway_connected))
 	}
+	fn existing_dm(&self, user: Id) -> Option<Id> {
+		self.channels
+			.iter()
+			.find(|channel| {
+				channel.guild.is_none()
+					&& channel.kind == 1
+					&& channel.recipients.len() == 1
+					&& channel.recipients[0].id == user
+					&& !channel.recipients[0].webhook
+			})
+			.map(|channel| channel.id)
+	}
 	fn open_dm(&mut self, user: Id, friend_only: bool) -> Option<Command> {
-		if let Some(channel) = self.channels.iter().find(|channel| {
-			channel.guild.is_none()
-				&& channel.kind == 1
-				&& channel.recipients.len() == 1
-				&& channel.recipients[0].id == user
-				&& !channel.recipients[0].webhook
-		}) {
-			return self.select(channel.id);
+		if let Some(channel) = self.existing_dm(user) {
+			return self.select(channel);
 		}
 		let command = self.request_user_action(Action::OpenDm(user))?;
 		self.user_actions.dm_origin = Some((self.selected, self.request, friend_only));
@@ -1618,6 +1632,27 @@ mod tests {
 			.unwrap();
 		assert!(state.select_opened_dm().is_none());
 		assert_eq!(state.selected, Some(Id(10)));
+	}
+
+	#[test]
+	fn existing_friend_dm_stays_navigable_while_reconnecting() {
+		let (mut state, user, channel) = stranger_dm();
+		state.channels.push(channel.clone());
+		state
+			.apply_user_action(Event::Friends(Some(vec![(
+				user.clone(),
+				"synthetic".into(),
+			)])))
+			.unwrap();
+		state.gateway_connected = false;
+		assert!(
+			matches!(state.open_friend_dm(user.id), Some(Command::History { channel: id, .. }) if id == channel.id)
+		);
+		assert_eq!(state.selected, Some(channel.id));
+		state.channels.retain(|known| known.id != channel.id);
+		state.select(Id(10));
+		assert!(state.open_friend_dm(user.id).is_none());
+		assert!(!state.user_action_pending());
 	}
 
 	#[test]

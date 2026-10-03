@@ -224,6 +224,10 @@ impl crate::MessagingUi {
 			state.status = "Wait for the current direct message action to finish";
 			return;
 		}
+		if matches!(intent, Intent::Call) && (state.demo || !self.voice_available) {
+			state.status = "Calls are unavailable in this session";
+			return;
+		}
 		if !state.can_open_user_dm(&user)
 			|| user.heap_bytes() > 64 * 1024
 			|| matches!(&intent, Intent::Send(content) if content.trim().is_empty()
@@ -233,10 +237,6 @@ impl crate::MessagingUi {
 		{
 			self.profile.finish_message(user.id, false);
 			state.status = "This direct message action is unavailable; your message was kept";
-			return;
-		}
-		if matches!(intent, Intent::Call) && (state.demo || !self.voice_available) {
-			state.status = "Calls are unavailable in this session";
 			return;
 		}
 		let pending = Pending {
