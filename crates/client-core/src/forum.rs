@@ -1,5 +1,5 @@
 //! Forum containers list their posts (threads) and create one post at a time.
-use crate::{Command, MAX_CONTENT, MAX_NAV, State, auth::AuthState, auth::Failure};
+use crate::{Command, MAX_NAV, State, auth::AuthState, auth::Failure};
 use model::{Channel, Id, permissions as p};
 
 pub const MAX_TITLE: usize = 100;
@@ -444,12 +444,11 @@ impl State {
 		tags: &[Id],
 	) -> Option<Command> {
 		let title = title.trim();
-		let content = content.trim();
+		let content = model::message_options::starter(content);
 		if !self.can_create_post(parent)
 			|| title.is_empty()
 			|| title.chars().count() > MAX_TITLE
-			|| (content.is_empty() && filenames.is_empty())
-			|| content.chars().count() > MAX_CONTENT
+			|| !model::message_options::valid(content, self.content_limit(), !filenames.is_empty())
 		{
 			return None;
 		}
@@ -555,7 +554,7 @@ impl State {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::{Envelope, Event};
+	use crate::{Envelope, Event, MAX_CONTENT};
 
 	fn channel(id: u64, parent: Option<Id>, kind: u8) -> Channel {
 		Channel {
@@ -830,6 +829,25 @@ mod tests {
 		assert!(state.create_post(Id(10), "Title", "Body").is_none());
 		assert!(state.create_post(Id(20), "", "Body").is_none());
 		assert!(state.create_post(Id(20), "Title", " ").is_none());
+		assert!(state.create_post(Id(20), "Title", "@silent ").is_none());
+		assert!(state.posting.pending.is_none());
+		let formatted = "@silent\n    code\n  ";
+		let quiet = state.create_post(Id(20), "Title", formatted).unwrap();
+		assert!(matches!(&quiet, Command::CreatePost { content, .. } if content == formatted));
+		state.command_rejected(quiet);
+		let full = format!("@silent {}", "x".repeat(MAX_CONTENT));
+		let quiet = state.create_post(Id(20), "Title", &full).unwrap();
+		assert!(matches!(&quiet, Command::CreatePost { content, .. } if content == &full));
+		state.command_rejected(quiet);
+		assert!(
+			state
+				.create_post(
+					Id(20),
+					"Title",
+					&format!("@silent {}", "x".repeat(MAX_CONTENT + 1))
+				)
+				.is_none()
+		);
 		let Some(Command::CreatePost { request, .. }) =
 			state.create_post(Id(20), " Title ", "Body")
 		else {

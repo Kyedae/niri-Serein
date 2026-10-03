@@ -23,6 +23,8 @@ struct Preview {
 	output: PathBuf,
 	thumbnail: bool,
 	frames: u8,
+	/// Wheel distance and pointer position injected over the first frames, for pages below the fold.
+	scroll: Option<(f32, egui::Pos2)>,
 	requested: bool,
 	screenshot: Option<std::sync::mpsc::Receiver<Arc<egui::ColorImage>>>,
 	writer: Option<JoinHandle<Result<(), String>>>,
@@ -33,6 +35,18 @@ struct Preview {
 impl eframe::App for Preview {
 	fn persist_egui_memory(&self) -> bool {
 		false
+	}
+
+	fn raw_input_hook(&mut self, _: &egui::Context, raw_input: &mut egui::RawInput) {
+		if let Some((distance, at)) = self.scroll.filter(|_| (1..=3).contains(&self.frames)) {
+			raw_input.events.push(egui::Event::PointerMoved(at));
+			raw_input.events.push(egui::Event::MouseWheel {
+				unit: egui::MouseWheelUnit::Point,
+				phase: egui::TouchPhase::Move,
+				delta: egui::vec2(0.0, -distance / 3.0),
+				modifiers: egui::Modifiers::NONE,
+			});
+		}
 	}
 
 	fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
@@ -282,37 +296,37 @@ fn extension_fixture(
 			.as_deref()
 			.ok_or("Set SEREIN_PREVIEW_PACKAGE to the external plugin package")?,
 		"serein-ocean" => {
-			include_bytes!("../../../community-extensions/themes/ocean.serein-extension")
+			include_bytes!("../../../extensions/themes/ocean.serein-extension")
 		}
 		"message-delete-protector" => include_bytes!(
-			"../../../community-extensions/plugins/packages/message-delete-protector.serein-extension"
+			"../../../extensions/plugins/packages/message-delete-protector.serein-extension"
 		),
 		"serein-midnight" => {
-			include_bytes!("../../../community-extensions/themes/midnight.serein-extension")
+			include_bytes!("../../../extensions/themes/midnight.serein-extension")
 		}
 		"serein-rose" => {
-			include_bytes!("../../../community-extensions/themes/rose.serein-extension")
+			include_bytes!("../../../extensions/themes/rose.serein-extension")
 		}
 		"serein-forest" => {
-			include_bytes!("../../../community-extensions/themes/forest.serein-extension")
+			include_bytes!("../../../extensions/themes/forest.serein-extension")
 		}
 		"serein-latte" => {
-			include_bytes!("../../../community-extensions/themes/latte.serein-extension")
+			include_bytes!("../../../extensions/themes/latte.serein-extension")
 		}
 		"golden-theme" => {
-			include_bytes!("../../../community-extensions/themes/golden.serein-extension")
+			include_bytes!("../../../extensions/themes/golden.serein-extension")
 		}
 		"black-theme" => {
-			include_bytes!("../../../community-extensions/themes/katana.serein-extension")
+			include_bytes!("../../../extensions/themes/katana.serein-extension")
 		}
 		"obsidian-theme" => {
-			include_bytes!("../../../community-extensions/themes/obsidian.serein-extension")
+			include_bytes!("../../../extensions/themes/obsidian.serein-extension")
 		}
 		"teal-theme" => {
-			include_bytes!("../../../community-extensions/themes/teal.serein-extension")
+			include_bytes!("../../../extensions/themes/teal.serein-extension")
 		}
 		"emoji-sticker-images" => include_bytes!(
-			"../../../community-extensions/plugins/packages/emoji-sticker-images.serein-extension"
+			"../../../extensions/plugins/packages/emoji-sticker-images.serein-extension"
 		),
 		_ => return Err("Unknown fixture extension".into()),
 	};
@@ -357,27 +371,27 @@ fn seed_catalog(extensions: &mut ui::ExtensionUi, themes: bool) {
 	if themes {
 		let packages: [(&[u8], &str); 6] = [
 			(
-				include_bytes!("../../../community-extensions/themes/ocean.serein-extension"),
+				include_bytes!("../../../extensions/themes/ocean.serein-extension"),
 				"",
 			),
 			(
-				include_bytes!("../../../community-extensions/themes/obsidian.serein-extension"),
+				include_bytes!("../../../extensions/themes/obsidian.serein-extension"),
 				"Obsidian violet surfaces and lavender accents.",
 			),
 			(
-				include_bytes!("../../../community-extensions/themes/forest.serein-extension"),
+				include_bytes!("../../../extensions/themes/forest.serein-extension"),
 				"Calm forest greens and fresh leafy accents.",
 			),
 			(
-				include_bytes!("../../../community-extensions/themes/latte.serein-extension"),
+				include_bytes!("../../../extensions/themes/latte.serein-extension"),
 				"Warm coffee tones and a creamy caramel accent.",
 			),
 			(
-				include_bytes!("../../../community-extensions/themes/rose.serein-extension"),
+				include_bytes!("../../../extensions/themes/rose.serein-extension"),
 				"Soft rose accents.",
 			),
 			(
-				include_bytes!("../../../community-extensions/themes/midnight.serein-extension"),
+				include_bytes!("../../../extensions/themes/midnight.serein-extension"),
 				"Deep, quiet surfaces.",
 			),
 		];
@@ -405,11 +419,10 @@ fn seed_catalog(extensions: &mut ui::ExtensionUi, themes: bool) {
 			.collect();
 		entries[0].manifest.name = "My ocean".into();
 		entries[0].manifest.author = "You".into();
-		let image = image::load_from_memory(include_bytes!(
-			"../../../community-extensions/previews/ocean.png"
-		))
-		.expect("valid synthetic cover")
-		.to_rgba8();
+		let image =
+			image::load_from_memory(include_bytes!("../../../extensions/previews/ocean.png"))
+				.expect("valid synthetic cover")
+				.to_rgba8();
 		entries[0].cover_image = Some(Arc::new(egui::ColorImage::from_rgba_unmultiplied(
 			[image.width() as usize, image.height() as usize],
 			image.as_raw(),
@@ -418,9 +431,8 @@ fn seed_catalog(extensions: &mut ui::ExtensionUi, themes: bool) {
 		extensions.set_entries(entries);
 		return;
 	}
-	let catalog =
-		extensions::parse_catalog(include_bytes!("../../../community-extensions/catalog.json"))
-			.expect("valid fixture catalog");
+	let catalog = extensions::parse_catalog(include_bytes!("../../../extensions/catalog.json"))
+		.expect("valid fixture catalog");
 	extensions.set_entries(
 		catalog
 			.entries
@@ -442,8 +454,7 @@ fn seed_catalog(extensions: &mut ui::ExtensionUi, themes: bool) {
 			})
 			.collect(),
 	);
-	let previews =
-		PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../community-extensions/previews");
+	let previews = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../extensions/previews");
 	{
 		let (id, filename) = ("serein-ocean", "ocean.png");
 		let image = image::open(previews.join(filename))
@@ -487,7 +498,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let args: Vec<_> = std::env::args().skip(1).collect();
 	let value = |prefix: &str| args.iter().find_map(|arg| arg.strip_prefix(prefix));
 	if !args.iter().any(|arg| arg == "--demo") {
-		return Err("Usage: profile_preview --demo [--output=PATH.png | --smoke | --interactive] [--page=stickers|slash-commands|slash-command-search|slash-command-options|profile|profile-card|member-tags|dm-tags|account|appearance|general|extensions|server|server-engagement|server-stickers] [--command=help|weather] [--themes] [--extension=ID] [--thumbnail] [--width=1120] [--height=760] [--light]".into());
+		return Err("Usage: profile_preview --demo [--output=PATH.png | --smoke | --interactive] [--page=stickers|slash-commands|slash-command-search|slash-command-options|profile|profile-card|member-tags|dm-tags|account|appearance|general|keybinds|extensions|server|server-engagement|server-safety|server-emoji|server-stickers|server-members|server-roles|server-invites|server-integrations|server-audit-log] [--command=help|weather] [--themes] [--extension=ID] [--thumbnail] [--width=1120] [--height=760] [--scroll=PIXELS] [--light]".into());
 	}
 	let smoke = args.iter().any(|arg| arg == "--smoke");
 	let interactive = args.iter().any(|arg| arg == "--interactive");
@@ -510,16 +521,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 			| "account"
 			| "appearance"
 			| "general"
+			| "keybinds"
 			| "extensions"
 			| "server"
 			| "server-engagement"
 			| "server-stickers"
+			| "server-safety"
+			| "server-emoji"
+			| "server-members"
+			| "server-roles"
+			| "server-invites"
+			| "server-integrations"
+			| "server-audit-log"
 			| "forum" | "forum-post"
 			| "forum-gallery"
 			| "forum-settings"
 			| "friends"
 	) {
-		return Err("Page must be profile, profile-card, member-tags, dm-tags, account, appearance, general, extensions, slash-commands, slash-command-search, slash-command-options, server, server-engagement or server-stickers".into());
+		return Err("Page must be profile, profile-card, member-tags, dm-tags, account, appearance, general, keybinds, extensions, slash-commands, slash-command-search, slash-command-options, server, server-engagement, server-safety, server-emoji, server-stickers, server-members, server-roles, server-invites, server-integrations or server-audit-log".into());
 	}
 	let slash_command = value("--command=").unwrap_or("help").to_owned();
 	if !matches!(slash_command.as_str(), "help" | "weather") {
@@ -527,6 +546,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	}
 	let width: f32 = value("--width=").unwrap_or("1120").parse()?;
 	let height: f32 = value("--height=").unwrap_or("760").parse()?;
+	let scroll = value("--scroll=")
+		.map(str::parse::<f32>)
+		.transpose()?
+		.map(|distance| (distance, egui::pos2(width * 0.6, height * 0.5)));
 	if !(500.0..=1920.0).contains(&width) || !(520.0..=1200.0).contains(&height) {
 		return Err("Viewport must be 500-1920 by 520-1200".into());
 	}
@@ -732,13 +755,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				server_settings_demo::open(&mut state, &mut messaging);
 				if page == "server-engagement" {
 					messaging.preview_server_engagement();
-				} else if page == "server-stickers"
+				} else if page == "server-safety" {
+					messaging.preview_server_safety();
+				} else if page != "server"
 					&& let Some(client_core::Command::ServerAdmin {
 						guild,
 						request,
 						action,
-					}) = messaging.preview_server_admin(&mut state, model::Id(10), "stickers")
-				{
+					}) = messaging.preview_server_admin(
+						&mut state,
+						model::Id(10),
+						page.trim_start_matches("server-"),
+					) {
 					let event =
 						server_settings_demo::execute_admin(&state, guild, request, *action);
 					state.apply(client_core::Envelope {
@@ -765,7 +793,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 					if theme_preview {
 						prime_extension_chat(&mut state);
 						let package = extensions::parse_package(include_bytes!(
-							"../../../community-extensions/themes/katana.serein-extension"
+							"../../../extensions/themes/katana.serein-extension"
 						))?;
 						messaging.extensions.receive_theme_edit(
 							Box::new(package),
@@ -777,7 +805,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 					}
 					if let Some(tab) = &theme_editor {
 						let mut package = extensions::parse_package(include_bytes!(
-							"../../../community-extensions/themes/ocean.serein-extension"
+							"../../../extensions/themes/ocean.serein-extension"
 						))
 						.expect("valid theme fixture");
 						package.manifest.name = "My ocean".into();
@@ -789,8 +817,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 							true,
 							false,
 						);
-						let bytes =
-							include_bytes!("../../../community-extensions/previews/ocean.png");
+						let bytes = include_bytes!("../../../extensions/previews/ocean.png");
 						let pixels = image::load_from_memory(bytes)
 							.expect("valid fixture image")
 							.to_rgba8();
@@ -813,6 +840,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				output,
 				thumbnail,
 				frames: 0,
+				scroll,
 				requested: false,
 				screenshot: None,
 				writer: None,

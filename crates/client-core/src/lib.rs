@@ -57,6 +57,8 @@ use trail::Place;
 
 pub const MAX_DRAFT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_CONTENT: usize = 2000;
+/// Nitro and Nitro Classic accounts may send longer messages.
+pub const MAX_PREMIUM_CONTENT: usize = 4000;
 /// Discord accepts at most ten attachments per message.
 pub const MAX_ATTACHMENTS: usize = 10;
 pub const MAX_NAV: usize = model::account::MAX_ENTRIES;
@@ -195,6 +197,10 @@ pub enum Command {
 		request: u64,
 	},
 	CancelGifs,
+	GifFavorites {
+		request: u64,
+		change: Option<(model::Gif, bool)>,
+	},
 	MarkRead {
 		channel: Id,
 		message: Id,
@@ -274,7 +280,8 @@ pub enum Command {
 	},
 }
 pub struct Startup {
-	pub external_stickers: bool,
+	/// Discord's `premium_type`: 0 none, 1 Nitro Classic, 2 Nitro, 3 Nitro Basic.
+	pub premium_type: u8,
 	pub user: User,
 	pub guilds: Vec<Guild>,
 	pub channels: Vec<Channel>,
@@ -500,6 +507,10 @@ pub enum Event {
 		request: u64,
 		result: Result<model::GifPage, auth::Failure>,
 	},
+	GifFavorites {
+		request: u64,
+		result: Result<Vec<model::Gif>, auth::Failure>,
+	},
 	ReadState(read_state::Event),
 	NotificationPreferences(notifications::Event),
 	Reactions(reactions::Event),
@@ -647,6 +658,8 @@ pub struct ReadingCursor {
 }
 
 pub struct State {
+	/// The signed-in account's Discord `premium_type`; 0 until READY reports one.
+	pub premium_type: u8,
 	pub stickers: stickers::Stickers,
 	pub interactions: interactions::Interactions,
 	pub application_commands: application_commands::Catalog,
@@ -862,6 +875,7 @@ enum Apply {
 impl Default for State {
 	fn default() -> Self {
 		Self {
+			premium_type: 0,
 			stickers: Default::default(),
 			interactions: Default::default(),
 			application_commands: Default::default(),
@@ -1055,6 +1069,27 @@ impl State {
 				.iter()
 				.any(|p| p.delivery != Delivery::Confirmed)
 	}
+	fn set_premium_type(&mut self, kind: u8) {
+		self.premium_type = kind;
+		self.stickers.external_allowed = matches!(kind, 2 | 3);
+	}
+	/// Longest message content Discord accepts from this account.
+	pub fn content_limit(&self) -> usize {
+		if matches!(self.premium_type, 1 | 2) {
+			MAX_PREMIUM_CONTENT
+		} else {
+			MAX_CONTENT
+		}
+	}
+	/// Largest per-message attachment total this account may send without server boosts.
+	pub fn upload_limit(&self) -> u64 {
+		const MIB: u64 = 1024 * 1024;
+		match self.premium_type {
+			2 => 500 * MIB,
+			1 | 3 => 50 * MIB,
+			_ => 20 * MIB,
+		}
+	}
 	pub fn draft_bytes(&self) -> usize {
 		self.drafts.values().map(String::capacity).sum::<usize>()
 			+ self
@@ -1127,6 +1162,14 @@ impl State {
 		self.select(channel)
 	}
 	pub fn select(&mut self, channel: Id) -> Option<Command> {
+		// Choosing another server's channel while a join is pending cancels its navigation.
+		if let Some((_, guild)) = self.invite_join.navigate
+			&& self
+				.channel(channel)
+				.is_some_and(|c| c.guild != Some(guild))
+		{
+			self.invite_join.navigate = None;
+		}
 		// Keep the current conversation intact, but allow a restored channel to load again.
 		if self.selected == Some(channel) && self.freshness != Freshness::Unavailable {
 			return None;
@@ -1697,9 +1740,11 @@ impl State {
 		} else {
 			self.drafts.get(&channel).map_or("", String::as_str)
 		};
-		if (content.trim().is_empty() && filenames.is_empty() && sticker.is_none())
-			|| content.chars().count() > MAX_CONTENT
-			|| self.pending.len() >= 64
+		if !model::message_options::valid(
+			content,
+			self.content_limit(),
+			!filenames.is_empty() || sticker.is_some(),
+		) || self.pending.len() >= 64
 			|| self.draft_bytes()
 				+ content.len()
 				+ filenames
@@ -1974,6 +2019,10 @@ impl State {
 			self.apply_gifs(request, Err(auth::Failure::Capacity));
 			return;
 		}
+		if let Command::GifFavorites { request, .. } = command {
+			self.apply_gif_favorites(request, Err(auth::Failure::Capacity));
+			return;
+		}
 		if let Command::Edit {
 			channel,
 			message,
@@ -2116,10 +2165,20 @@ impl State {
 
 		if let Command::Voice(control) = command {
 			match control {
+				voice::Command::RingRecipient {
+					channel, request, ..
+				} => self.apply_voice(voice::Event::RingFailed {
+					channel,
+					request,
+					message: "Recipient ringing was not sent; the work queue is full",
+				}),
 				voice::Command::Sync { .. } => {
 					self.status = "Call status could not refresh; reopen the DM to retry"
 				}
 				voice::Command::Join {
+					channel, request, ..
+				}
+				| voice::Command::ConfirmSession {
 					channel, request, ..
 				}
 				| voice::Command::Ring { channel, request } => self.apply_voice(voice::Event::Failed {
@@ -2191,7 +2250,7 @@ impl State {
 				..
 			} = *startup;
 			let Startup {
-				external_stickers,
+				premium_type,
 				user,
 				guilds,
 				channels,
@@ -2216,7 +2275,7 @@ impl State {
 			if self.auth != auth::AuthState::Authenticated {
 				return;
 			}
-			self.stickers.external_allowed = external_stickers;
+			self.set_premium_type(premium_type);
 			warnings.read_state |= self.apply_read_state(read_state).is_err();
 			if let Some(settings) = notifications {
 				warnings.notifications |= self.apply_notification_preferences(settings).is_err();
@@ -2242,7 +2301,7 @@ impl State {
 			Event::Ready { .. } | Event::Disconnected | Event::Resync
 		) {
 			if matches!(envelope.event, Event::Ready { .. } | Event::Resync) {
-				self.stickers.external_allowed = false;
+				self.set_premium_type(0);
 			}
 			self.interrupt_stickers();
 			self.posts.clear_summaries();
@@ -2385,7 +2444,7 @@ impl State {
 			&envelope.event,
 			Event::History { .. } | Event::Message(_) | Event::Patch(_) | Event::SendResult { .. }
 		)
-		.then(|| self.timeline.iter().last().map(|message| message.id))
+		.then(|| self.timeline.iter().next_back().map(|message| message.id))
 		.flatten();
 		let incoming_tail = match &envelope.event {
 			Event::Message(message)
@@ -2521,10 +2580,12 @@ impl State {
 				Ok(())
 			}
 			Event::StickerEntitlement { user, premium_type } => {
-				if self.user.as_ref().is_some_and(|own| own.id == user)
-					&& !matches!(premium_type, Patch::Absent)
-				{
-					self.stickers.external_allowed = matches!(premium_type, Patch::Value(2 | 3));
+				if self.user.as_ref().is_some_and(|own| own.id == user) {
+					match premium_type {
+						Patch::Absent => {}
+						Patch::Null => self.set_premium_type(0),
+						Patch::Value(kind) => self.set_premium_type(kind),
+					}
 				}
 				Ok(())
 			}
@@ -2561,6 +2622,10 @@ impl State {
 			}
 			Event::Gifs { request, result } => {
 				self.apply_gifs(request, result);
+				Ok(())
+			}
+			Event::GifFavorites { request, result } => {
+				self.apply_gif_favorites(request, result);
 				Ok(())
 			}
 			Event::ReadState(event) => self.apply_read_state(event),
@@ -2935,6 +3000,11 @@ impl State {
 							participants.retain(|p| p.user != user);
 						}
 					}
+					for (id, ringing) in &mut self.voice.dm_ringing {
+						if *id == channel {
+							ringing.retain(|id| *id != user);
+						}
+					}
 					if let Some(call) = &mut self.voice.active
 						&& call.channel == channel
 					{
@@ -3084,6 +3154,8 @@ impl State {
 				self.voice.preview = None;
 				self.voice.dm_calls.clear();
 				self.voice.dm_participants.clear();
+				self.voice.dm_ringing.clear();
+				self.voice.ring_error = None;
 				self.members = None;
 				self.member_search = Default::default();
 				self.clear_profile();
@@ -3113,6 +3185,7 @@ impl State {
 				self.channels = channels;
 				self.permissions = permission_state;
 				self.archived_thread = None;
+				self.interrupt_gif_favorites();
 				self.auth = auth::AuthState::Authenticated;
 				self.gateway_connected = true;
 				self.status = if unavailable {
@@ -3193,8 +3266,12 @@ impl State {
 						self.status = "No messages returned after this boundary; use Jump to present to reload";
 					}
 				}
-				if r.is_ok() && self.gateway_connected {
-					self.freshness = Freshness::Fresh;
+				if r.is_ok() {
+					self.freshness = if self.gateway_connected {
+						Freshness::Fresh
+					} else {
+						Freshness::Stale
+					};
 				}
 				r
 			}
@@ -3462,9 +3539,11 @@ impl State {
 				// The voice socket is independent and a RESUME replays roster changes, so the call,
 				// roster and known DM calls all stay. Only a fresh READY invalidates the voice state.
 				self.voice.incoming = None;
-				self.gateway_connected = false;
-				self.cancel_history();
-				self.freshness = Freshness::Stale;
+				if std::mem::replace(&mut self.gateway_connected, false) {
+					self.cancel_history();
+					self.freshness = Freshness::Stale;
+				}
+				// Retry notifications must not invalidate a REST reload started during the outage.
 				self.status = "Reconnecting…";
 				Ok(())
 			}
@@ -3526,7 +3605,7 @@ impl State {
 			&& self
 				.timeline
 				.iter()
-				.last()
+				.next_back()
 				.is_none_or(|message| message.id < tail)
 		{
 			self.history_targeted = true;
@@ -3694,6 +3773,7 @@ impl State {
 		if failure.ends_session() {
 			self.application_commands.clear();
 			self.interrupt_stickers();
+			self.interrupt_gif_favorites();
 			self.invalidate_messaging_permissions(Some(failure));
 			self.interrupt_own_profile();
 			self.local_game_activity = Default::default();
@@ -3944,6 +4024,16 @@ impl Event {
 				Self::Gifs {
 					result: Ok(page), ..
 				} => page.bytes(),
+				Self::GifFavorites {
+					result: Ok(favorites),
+					..
+				} => {
+					favorites.capacity() * size_of::<model::Gif>()
+						+ favorites
+							.iter()
+							.map(|gif| gif.bytes() - size_of::<model::Gif>())
+							.sum::<usize>()
+				}
 				Self::ReadState(read_state::Event::Snapshot { entries, .. }) => entries
 					.as_ref()
 					.map_or(0, |e| e.capacity() * size_of::<(Id, Option<Id>, u32)>()),
@@ -4227,6 +4317,24 @@ mod tests {
 			..State::default()
 		};
 		assert!(state.prepare_send().is_none());
+		state.drafts.insert(Id(1), "@silent".into());
+		state.reply = Some(Reply::to(Id(7)));
+		assert!(state.prepare_send().is_none());
+		assert_eq!(state.drafts[&Id(1)], "@silent");
+		assert!(state.pending.is_empty() && state.reply.is_some());
+		let full = format!("@silent {}", "é".repeat(MAX_CONTENT));
+		state.drafts.insert(Id(1), full.clone());
+		assert!(
+			matches!(state.prepare_send(), Some(Command::Send { content, .. }) if content == full)
+		);
+		assert_eq!(state.pending[0].content, full);
+		state.pending.clear();
+		state
+			.drafts
+			.insert(Id(1), format!("@silent {}", "x".repeat(MAX_CONTENT + 1)));
+		assert!(state.prepare_send().is_none());
+		assert!(!state.drafts[&Id(1)].is_empty() && state.pending.is_empty());
+		state.drafts.clear();
 		for invalid in [
 			"",
 			" ",
@@ -4381,7 +4489,21 @@ mod tests {
 					..
 				})
 			));
+			// A joined server opens once delivered; choosing another server cancels that.
+			state.invite_join.navigate = Some((std::time::Instant::now(), Id(2)));
+			assert!(state.navigate_after_join().is_some());
+			assert_eq!(
+				state
+					.selected
+					.and_then(|id| state.channel(id))
+					.and_then(|c| c.guild),
+				Some(Id(2))
+			);
+			assert!(state.navigate_after_join().is_none());
+			state.invite_join.navigate = Some((std::time::Instant::now(), Id(2)));
 			state.select(Id(11));
+			assert!(state.navigate_after_join().is_none());
+			assert_eq!(state.selected, Some(Id(11)));
 			state.select(Id(20));
 			assert!(matches!(
 				state.select_guild(Id(1)),
