@@ -859,7 +859,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				test_support::seed_stickers(&mut state);
 				messaging.preview_sticker_picker();
 			} else if page == "collectibles" {
-				// Synthetic cosmetics: the UI draws their artwork locally, offline.
+				// Synthetic cosmetics: the UI draws their artwork locally, offline. They are
+				// opt-in, so this page turns all four on.
+				messaging.cosmetics = model::CosmeticPreferences::SHOWN;
 				let user = test_support::message(1, model::Id(20)).author;
 				let mut offline = test_support::message(2, model::Id(20)).author;
 				offline.id = model::Id(3);

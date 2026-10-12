@@ -666,13 +666,14 @@ mod tests {
 			.drop_without_applying_deltas();
 			avatars.take_requests()
 		};
-		let shown = paint(model::CosmeticPreferences::default());
+		let shown = paint(model::CosmeticPreferences::SHOWN);
 		assert!(shown.iter().any(|key| key.starts_with("decoration-")));
 		assert!(shown.iter().any(|key| key.starts_with("nameplate-")));
-		assert!(paint(model::CosmeticPreferences::HIDDEN).is_empty());
+		// Opt-in: nothing is drawn or requested by default.
+		assert!(paint(model::CosmeticPreferences::default()).is_empty());
 		let only_nameplates = paint(model::CosmeticPreferences {
 			nameplates: true,
-			..model::CosmeticPreferences::HIDDEN
+			..Default::default()
 		});
 		assert!(
 			only_nameplates

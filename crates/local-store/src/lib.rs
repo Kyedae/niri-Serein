@@ -2205,18 +2205,18 @@ mod tests {
 			store.app_preferences().unwrap().gpu_preference,
 			model::GpuPreference::PowerSaving
 		);
-		// Older rows keep every cosmetic and the historical image budgets.
+		// Older rows show no cosmetics (they are opt-in) and keep the historical budgets.
 		let legacy: AppPreferences = serde_json::from_str("{}").unwrap();
 		assert_eq!(legacy.cosmetics, model::CosmeticPreferences::default());
 		assert_eq!(legacy.image_cache, model::CachePreferences::default());
 		let partial: AppPreferences = serde_json::from_str(
-			r#"{"cosmetics":{"nameplates":false},"image_cache":{"media_mib":512}}"#,
+			r#"{"cosmetics":{"nameplates":true},"image_cache":{"media_mib":512}}"#,
 		)
 		.unwrap();
-		assert!(partial.cosmetics.decorations && !partial.cosmetics.nameplates);
+		assert!(partial.cosmetics.nameplates && !partial.cosmetics.decorations);
 		assert_eq!(partial.image_cache.artwork_mib, 128);
 		let mut cache = AppPreferences {
-			cosmetics: model::CosmeticPreferences::HIDDEN,
+			cosmetics: model::CosmeticPreferences::SHOWN,
 			..Default::default()
 		};
 		cache.image_cache.media_mib = 2048;

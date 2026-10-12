@@ -36,9 +36,9 @@ fn active(expires_at: Option<u64>, now: u64) -> bool {
 	expires_at.is_none_or(|expires| expires > now)
 }
 
-/// Which cosmetics this device shows. Hidden cosmetics are neither painted nor downloaded,
-/// and hidden effects and frames skip their catalog read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// Which cosmetics this device shows. Each is opt-in: hidden cosmetics are neither painted
+/// nor downloaded, and hidden effects and frames skip their catalog read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct CosmeticPreferences {
 	pub decorations: bool,
@@ -46,26 +46,13 @@ pub struct CosmeticPreferences {
 	pub effects: bool,
 	pub frames: bool,
 }
-impl Default for CosmeticPreferences {
-	fn default() -> Self {
-		Self {
-			decorations: true,
-			nameplates: true,
-			effects: true,
-			frames: true,
-		}
-	}
-}
 impl CosmeticPreferences {
-	pub const HIDDEN: Self = Self {
-		decorations: false,
-		nameplates: false,
-		effects: false,
-		frames: false,
+	pub const SHOWN: Self = Self {
+		decorations: true,
+		nameplates: true,
+		effects: true,
+		frames: true,
 	};
-	pub fn any(self) -> bool {
-		self != Self::HIDDEN
-	}
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

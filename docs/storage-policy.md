@@ -23,12 +23,12 @@ evicts immediately, oldest first. The page shows the measured bytes of each part
 can clear either one without stopping image loading. The existing Clear cache still removes
 both partitions with history. Logout still removes the whole account directory.
 
-Settings › Appearance › Profile cosmetics can hide avatar decorations, nameplates, profile
-effects and profile frames on this device. Hidden cosmetics are not drawn and their
-artwork is not requested. Hidden effects and frames also skip the optional catalog read for
-new profile loads. Showing them again drops the RAM profile cache so details reload. Both
-preferences live in the bounded `app_preferences` row; older rows default to every cosmetic
-shown and the historical budgets.
+Settings › Appearance › Profile cosmetics turns on avatar decorations, nameplates, profile
+effects and profile frames for this device. All four are opt-in and off by default. Hidden
+cosmetics are not drawn and their artwork is not requested. Hidden effects and frames also
+skip the optional catalog read for new profile loads. Turning them on drops the RAM profile
+cache so details reload. Both preferences live in the bounded `app_preferences` row; older
+rows load with every cosmetic hidden and the historical budgets.
 
 ## Off-screen artwork retention (October 10, 2026)
 

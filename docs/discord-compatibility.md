@@ -52,8 +52,9 @@ establish it.
 
 Unknown palettes, layer kinds, anchors, malformed values and expired items are dropped
 without rejecting the user, member row or profile. Display-name styles and cosmetic
-editing are not supported. Settings › Appearance › Profile cosmetics hides any of the four
-on this device. This is a local display choice; nothing is sent to Discord.
+editing are not supported. All four are opt-in: they stay hidden, unrequested and without
+catalog reads until enabled in Settings › Appearance › Profile cosmetics. This is a local
+display choice; nothing is sent to Discord.
 
 ## Guild voice moderation — October 8, 2026
 
