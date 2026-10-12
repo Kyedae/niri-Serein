@@ -208,3 +208,54 @@ fn long_channel_welcome_wraps_within_narrow_light_and_dark_viewports() {
 		}
 	}
 }
+
+fn dm_history(state: &mut State, count: u64) {
+	state.gateway_connected = true;
+	state.auth = client_core::auth::AuthState::Authenticated;
+	let Some(client_core::Command::History { request, .. }) = state.select(Id(22)) else {
+		panic!("direct message history requested");
+	};
+	let messages = (0..count)
+		.rev()
+		.map(|n| {
+			let mut message = test_support::message(1_000_000 + n, Id(22));
+			message.attachments.clear();
+			message.embeds.clear();
+			message
+		})
+		.collect();
+	state.apply(Envelope {
+		generation: state.generation,
+		event: Event::History {
+			channel: Id(22),
+			request,
+			older: false,
+			messages,
+		},
+	});
+}
+
+fn introduces(painted: &[(String, Rect)]) -> bool {
+	painted
+		.iter()
+		.any(|(text, _)| text.starts_with("This is the beginning of your direct message history"))
+}
+
+#[test]
+fn direct_messages_open_with_an_introduction_once_history_is_complete() {
+	let ctx = Context::default();
+	// A short history is the whole conversation: the introduction leads it.
+	let mut state = test_support::demo_state();
+	dm_history(&mut state, 3);
+	assert!(state.older_exhausted);
+	let mut view = TimelineView::default();
+	let painted = frame(&ctx, &mut view, &mut state, 900.0);
+	assert!(introduces(&painted));
+	assert!(!welcomes(&painted));
+	// A full page may have older messages: no introduction until they are loaded.
+	let mut state = test_support::demo_state();
+	dm_history(&mut state, 50);
+	assert!(!state.older_exhausted);
+	let mut view = TimelineView::default();
+	assert!(!introduces(&frame(&ctx, &mut view, &mut state, 900.0)));
+}

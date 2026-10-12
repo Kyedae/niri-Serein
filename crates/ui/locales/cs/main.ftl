@@ -4640,3 +4640,6 @@ profiles-activity-empty = Žádná sdílená aktivita.
 profiles-mutuals-empty = Nothing to show here.
 
 reading-double-click-reaction = Double-click reaction
+
+# Context: timeline_dm_intro
+timeline-dm-intro = Toto je začátek vaší historie přímých zpráv s uživatelem { $name }.

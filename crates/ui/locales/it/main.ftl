@@ -4555,3 +4555,6 @@ profiles-activity-empty = Nessuna attività condivisa.
 profiles-mutuals-empty = Nothing to show here.
 
 reading-double-click-reaction = Double-click reaction
+
+# Context: timeline_dm_intro
+timeline-dm-intro = Questo è l'inizio della cronologia dei messaggi diretti con { $name }.

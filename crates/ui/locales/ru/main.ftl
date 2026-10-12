@@ -4561,3 +4561,6 @@ profiles-activity-empty = Нет опубликованной активност
 profiles-mutuals-empty = Nothing to show here.
 
 reading-double-click-reaction = Double-click reaction
+
+# Context: timeline_dm_intro
+timeline-dm-intro = Это начало истории ваших личных сообщений с { $name }.

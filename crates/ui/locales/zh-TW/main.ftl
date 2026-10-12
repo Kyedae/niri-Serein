@@ -4654,3 +4654,6 @@ profiles-activity-empty = 尚無分享的活動。
 profiles-mutuals-empty = 這裡沒有可顯示的內容。
 
 reading-double-click-reaction = 雙擊回應
+
+# Context: timeline_dm_intro
+timeline-dm-intro = 這是你與 { $name } 的私訊紀錄的開頭。

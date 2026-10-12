@@ -4639,3 +4639,6 @@ profiles-activity-empty = No activity shared.
 profiles-mutuals-empty = Nothing to show here.
 
 reading-double-click-reaction = Double-click reaction
+
+# Context: timeline_dm_intro
+timeline-dm-intro = This is the beginning of your direct message history with { $name }.

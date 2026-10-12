@@ -4541,3 +4541,6 @@ profiles-activity-empty = 共有されているアクティビティはありま
 profiles-mutuals-empty = Nothing to show here.
 
 reading-double-click-reaction = Double-click reaction
+
+# Context: timeline_dm_intro
+timeline-dm-intro = { $name } とのダイレクトメッセージ履歴の始まりです。

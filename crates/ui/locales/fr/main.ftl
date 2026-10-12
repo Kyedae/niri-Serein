@@ -4555,3 +4555,6 @@ profiles-activity-empty = Aucune activité partagée.
 profiles-mutuals-empty = Nothing to show here.
 
 reading-double-click-reaction = Double-click reaction
+
+# Context: timeline_dm_intro
+timeline-dm-intro = Ceci est le début de votre historique de messages privés avec { $name }.
