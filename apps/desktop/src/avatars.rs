@@ -1206,10 +1206,9 @@ async fn run(
 	let mut cooldown = Instant::now();
 	// Eight bounded loads overlap; each downloads and decodes off this loop, which owns the disk.
 	let mut jobs = tokio::task::JoinSet::new();
-	// A partition's clear generation, and the generation each in-flight download began in:
-	// downloads started before a clear finish for the UI but are not written back to disk.
+	// Each partition's clear generation. Every job carries the generation it began in, so a
+	// download started before a clear still reaches the UI but is not written back to disk.
 	let mut cleared = [0u64; 2];
-	let mut admitted = std::collections::HashMap::<String, u64>::new();
 	// Opened pictures first, then small shared artwork, then everything else in order.
 	let (mut viewer, mut artwork, mut inline) = (
 		VecDeque::<String>::new(),
@@ -1231,14 +1230,16 @@ async fn run(
 							.await
 							.ok()
 							.flatten();
-					Loaded {
+					// Bundled shapes are never written to disk.
+					let loaded = Loaded {
 						key,
 						fetched: None,
 						image,
 						frames: Vec::new(),
 						error: None,
 						until: Instant::now(),
-					}
+					};
+					(u64::MAX, loaded)
 				});
 				continue;
 			}
@@ -1263,8 +1264,8 @@ async fn run(
 					}
 				}
 			});
-			admitted.insert(key.clone(), cleared[partition(&key) as usize]);
-			jobs.spawn(load(Job {
+			let generation = cleared[partition(&key) as usize];
+			let job = load(Job {
 				budget: budget(&key),
 				key,
 				url: primary,
@@ -1274,7 +1275,8 @@ async fn run(
 				client: client.clone(),
 				cooldown,
 				early: results.clone(),
-			}));
+			});
+			jobs.spawn(async move { (generation, job.await) });
 		}
 		let loaded = tokio::select! {
 			biased;
@@ -1322,22 +1324,22 @@ async fn run(
 				continue;
 			},
 		};
-		let Loaded {
-			key,
-			fetched,
-			image,
-			frames,
-			mut error,
-			until,
-		} = loaded;
+		let (
+			generation,
+			Loaded {
+				key,
+				fetched,
+				image,
+				frames,
+				mut error,
+				until,
+			},
+		) = loaded;
 		cooldown = cooldown.max(until);
 		if *cancelled.borrow() {
 			break;
 		}
-		let current = admitted
-			.remove(&key)
-			.is_some_and(|generation| generation == cleared[partition(&key) as usize]);
-		if current
+		if generation == cleared[partition(&key) as usize]
 			&& disk_key(&key).is_some()
 			&& let (Some(disk), Some(bytes)) = (&mut disks[partition(&key) as usize], &fetched)
 		{

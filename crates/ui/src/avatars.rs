@@ -64,6 +64,9 @@ pub(crate) struct Avatars {
 	released: HashSet<String>,
 	/// Hover-only artwork that wanted to play while its frames were missing.
 	wanted: HashSet<String>,
+	/// Profile effect layers with a decode in flight, so readiness neither repeats the request
+	/// nor waits on frames that were discarded without one.
+	effect_decoding: HashSet<String>,
 	textures: HashMap<String, (Instant, TextureHandle)>,
 	emoji_textures: HashMap<String, (Instant, TextureHandle)>,
 	emoji_bytes: usize,
@@ -228,6 +231,7 @@ impl Avatars {
 		}
 	}
 	pub fn accept_animation(&mut self, key: String, frames: GifFrames) {
+		self.effect_decoding.remove(&key);
 		if key.starts_with("media:") {
 			if self.animate_gifs
 				&& let Some(rendition) = media::Rendition::parse(&key)

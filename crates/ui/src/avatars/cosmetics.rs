@@ -208,15 +208,28 @@ impl Avatars {
 		for layer in &effect.layers {
 			let key = layer.asset.key();
 			if self.attempts.get(&key).is_some_and(|(_, failed)| *failed) {
+				self.effect_decoding.remove(&key);
 				continue;
 			}
-			let loaded = self.cosmetic(ui.ctx(), &key, demo).is_some();
-			let settled = self.animations.contains_key(&key) || self.no_animations.contains(&key);
-			if !loaded || !settled {
+			if self.cosmetic(ui.ctx(), &key, demo).is_none() {
+				// `cosmetic` requested it; its frames arrive with the settled result.
+				if self.attempts.contains_key(&key) && self.effect_decoding.len() < 256 {
+					self.effect_decoding.insert(key);
+				}
 				ready = false;
-				// Frames released while idle reload only on request.
-				if loaded && self.released.contains(&key) {
-					self.request(key);
+				continue;
+			}
+			if self.animations.contains_key(&key) || self.no_animations.contains(&key) {
+				continue;
+			}
+			ready = false;
+			// Frames released while idle, discarded when animation was toggled or evicted from
+			// the pool: decode them again, once.
+			if !self.effect_decoding.contains(&key) && self.effect_decoding.len() < 256 {
+				self.request(key.clone());
+				// Only a queued request is pending; a full queue retries next frame.
+				if self.attempts.contains_key(&key) {
+					self.effect_decoding.insert(key);
 				}
 			}
 		}
@@ -689,6 +702,78 @@ mod tests {
 				.all(|key| key.starts_with("nameplate-"))
 				&& !only_nameplates.is_empty()
 		);
+	}
+
+	#[test]
+	fn effects_wait_for_decoded_layers_and_recover_discarded_frames() {
+		let ctx = egui::Context::default();
+		let layer = |hash: char| model::EffectLayer {
+			asset: model::EffectAsset {
+				shop: false,
+				hash: hash.to_string().repeat(64),
+			},
+			looping: true,
+			position: [0, 0],
+			size: model::EFFECT_CANVAS,
+			start_ms: 0,
+			duration_ms: 500,
+			loop_delay_ms: 0,
+			z: 0,
+		};
+		let effect = ProfileEffect {
+			sku: Id(1),
+			title: String::new(),
+			label: String::new(),
+			still: None,
+			layers: vec![layer('a')],
+		};
+		let key = effect.layers[0].asset.key();
+		let mut avatars = Avatars::default();
+		avatars.set_animation(true);
+		let ready = |avatars: &mut Avatars| {
+			let mut ready = false;
+			ctx.run_ui(Default::default(), |ui| {
+				ready = avatars.effect_ready(ui, &effect, false);
+			})
+			.drop_without_applying_deltas();
+			ready
+		};
+		let frames = || -> crate::avatars::GifFrames {
+			(0..2)
+				.map(|_| {
+					(
+						Duration::from_millis(50),
+						std::sync::Arc::new(ColorImage::filled([4, 4], Color32::WHITE)),
+					)
+				})
+				.collect()
+		};
+		// Missing artwork is requested; the preview frame alone does not start playback.
+		assert!(!ready(&mut avatars));
+		assert_eq!(avatars.take_requests(), std::slice::from_ref(&key));
+		avatars.accept(
+			&ctx,
+			key.clone(),
+			Some(ColorImage::filled([4, 4], Color32::WHITE)),
+		);
+		assert!(!ready(&mut avatars));
+		assert!(avatars.take_requests().is_empty(), "decode already pending");
+		avatars.accept_animation(key.clone(), frames());
+		assert!(ready(&mut avatars));
+		// Toggling animation discards frames but keeps the still: decode again, once.
+		avatars.set_animation(false);
+		avatars.set_animation(true);
+		assert!(!ready(&mut avatars));
+		assert_eq!(avatars.take_requests(), std::slice::from_ref(&key));
+		assert!(!ready(&mut avatars));
+		assert!(avatars.take_requests().is_empty());
+		avatars.accept(
+			&ctx,
+			key.clone(),
+			Some(ColorImage::filled([4, 4], Color32::WHITE)),
+		);
+		avatars.accept_animation(key, frames());
+		assert!(ready(&mut avatars));
 	}
 
 	#[test]
