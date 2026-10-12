@@ -18,7 +18,7 @@ mod avatars;
 #[cfg(feature = "demo")]
 pub use avatars::media::debug_heic_layout_check;
 pub use avatars::media::{Lane, MAX_FRAMES, Motion, Rendition, Size, fit_edge, is_motion_video};
-pub use avatars::{EMBED_EDGE, GifFrames};
+pub use avatars::{EMBED_EDGE, FRAME_EDGE, GifFrames};
 mod categories;
 #[cfg(feature = "demo")]
 pub use categories::debug_thread_navigation_check;
@@ -739,6 +739,11 @@ impl MessagingUi {
 	#[cfg(any(test, feature = "demo"))]
 	pub fn preview_profile(&mut self, user: model::User) {
 		self.members_narrow_open = true;
+		self.profile.command_open(user);
+	}
+	/// Fixture-only entry point: the profile popout alone, beside a docked member list.
+	#[cfg(any(test, feature = "demo"))]
+	pub fn preview_profile_popout(&mut self, user: model::User) {
 		self.profile.command_open(user);
 	}
 	#[cfg(any(test, feature = "demo"))]
@@ -1537,13 +1542,23 @@ impl MessagingUi {
 								)
 							});
 							let row = rect.shrink2(egui::vec2(0.0, 1.0));
-							if response.hovered() || response.has_focus() {
+							let focused = response.hovered() || response.has_focus();
+							if focused {
 								ui.painter().rect_filled(
 									row,
 									6,
 									design::row_highlight(ui, colors.hover, 1.0),
 								);
 							}
+							self.avatars.paint_nameplate(
+								ui,
+								&member.user,
+								row,
+								6,
+								focused,
+								!online,
+								state.demo,
+							);
 							let mut inner = ui.new_child(
 								egui::UiBuilder::new()
 									.max_rect(row.shrink2(egui::vec2(8.0, 4.0)))
@@ -5729,6 +5744,7 @@ mod composer_tests {
 			kind: Default::default(),
 			discriminator: 0,
 			primary_guild: None,
+			cosmetics: None,
 		};
 		let mut state = State {
 			selected: Some(Id(10)),
@@ -7754,6 +7770,7 @@ mod composer_tests {
 								kind: Default::default(),
 								discriminator: 0,
 								primary_guild: None,
+								cosmetics: None,
 							},
 							nick: None,
 							roles: vec![],
@@ -8509,6 +8526,7 @@ mod composer_tests {
 				kind: Default::default(),
 				discriminator: 0,
 				primary_guild: None,
+				cosmetics: None,
 			};
 			let mut state = State {
 				demo: true,

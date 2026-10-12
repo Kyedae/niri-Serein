@@ -440,6 +440,7 @@ mod tests {
 		Box::new(UserProfile {
 			user: model::User {
 				primary_guild: None,
+				cosmetics: None,
 				id: Id(1),
 				name: name.into(),
 				avatar: None,
@@ -461,6 +462,10 @@ mod tests {
 			theme_colors: None,
 			clan: None,
 			board: None,
+			effect_sku: None,
+			frame_sku: None,
+			effect: None,
+			frame: None,
 			limited: false,
 		})
 	}
@@ -762,6 +767,7 @@ mod tests {
 				Box::new(UserProfile {
 					user: model::User {
 						primary_guild: None,
+						cosmetics: None,
 						id: user,
 						name: "Synthetic".into(),
 						avatar: None,
@@ -783,6 +789,10 @@ mod tests {
 					theme_colors: None,
 					clan: None,
 					board: None,
+					effect_sku: None,
+					frame_sku: None,
+					effect: None,
+					frame: None,
 					limited: false,
 				})
 			}
@@ -891,6 +901,7 @@ mod tests {
 				Box::new(UserProfile {
 					user: model::User {
 						primary_guild: None,
+						cosmetics: None,
 						id: user,
 						name: "Synthetic".into(),
 						avatar: None,
@@ -912,6 +923,10 @@ mod tests {
 					theme_colors: None,
 					clan: None,
 					board: None,
+					effect_sku: None,
+					frame_sku: None,
+					effect: None,
+					frame: None,
 					limited: false,
 				})
 			};

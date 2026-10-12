@@ -841,6 +841,19 @@ impl MessagingUi {
 									crate::design::row_highlight(ui, colors.hover, 1.0),
 								);
 							}
+							if dm_list
+								&& channel.kind == 1 && let Some(user) = channel.recipients.first()
+							{
+								self.avatars.paint_nameplate(
+									ui,
+									user,
+									row,
+									8,
+									hovered || active,
+									access.muted(),
+									state.demo,
+								);
+							}
 							if unread && !active && !access.muted() {
 								ui.painter().rect_filled(
 									egui::Rect::from_center_size(
@@ -2077,6 +2090,7 @@ mod tests {
 				kind: Default::default(),
 				discriminator: 0,
 				primary_guild: None,
+				cosmetics: None,
 			}),
 			guilds: vec![model::Guild {
 				default_message_notifications: None,
@@ -2231,6 +2245,7 @@ mod tests {
 				kind: Default::default(),
 				discriminator: 0,
 				primary_guild: None,
+				cosmetics: None,
 			}),
 			guilds: vec![model::Guild {
 				default_message_notifications: None,

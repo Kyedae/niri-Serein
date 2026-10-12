@@ -2,6 +2,7 @@
 mod activity_sharing;
 mod archives;
 mod channel_actions;
+mod collectibles;
 pub mod detectable;
 pub mod external_assets;
 mod forum;
@@ -61,6 +62,7 @@ pub struct DiscordApi {
 	cooldown: Mutex<Instant>,
 	requests: Semaphore,
 	stopped: AtomicBool,
+	catalog: std::sync::Mutex<collectibles::Catalog>,
 	#[cfg(test)]
 	base: String,
 	#[cfg(test)]
@@ -215,6 +217,7 @@ impl DiscordApi {
 			cooldown: Mutex::new(Instant::now()),
 			requests: Semaphore::new(4),
 			stopped: AtomicBool::new(false),
+			catalog: std::sync::Mutex::default(),
 			#[cfg(test)]
 			base: "https://discord.com/api/v10".into(),
 			#[cfg(test)]
@@ -1147,14 +1150,29 @@ impl DiscordApi {
 						return Err(Failure::Protocol);
 					}
 					// Optional names/artwork must not hold the entire profile behind slow reads
-					// or a shared service cooldown. Dropping this read is safe: it never writes.
-					if let Ok(result) = tokio::time::timeout(
-						Duration::from_secs(2),
-						self.load_profile_board_games(&mut profile),
-					)
-					.await
-					{
+					// or a shared service cooldown. Dropping these reads is safe: they never write.
+					let (effect, frame) = (profile.effect_sku, profile.frame_sku);
+					let (board, cosmetics) = tokio::join!(
+						tokio::time::timeout(
+							Duration::from_secs(2),
+							self.load_profile_board_games(&mut profile),
+						),
+						tokio::time::timeout(
+							Duration::from_secs(2),
+							self.load_profile_collectibles(effect, frame),
+						),
+					);
+					if let Ok(result) = board {
 						result?;
+					}
+					if let Ok(result) = cosmetics {
+						let (effect, frame) = result?;
+						let mut enriched = profile.clone();
+						enriched.effect = effect.map(Box::new);
+						enriched.frame = frame.map(Box::new);
+						if enriched.valid() {
+							profile = enriched;
+						}
 					}
 					Ok(Box::new(profile))
 				}

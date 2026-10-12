@@ -31,6 +31,9 @@ fn is_animated_key(key: &str) -> bool {
 	if key.starts_with("anim:") {
 		return true;
 	}
+	if let Some(cosmetic) = Cosmetic::parse(key) {
+		return cosmetic.animated();
+	}
 	if let Some(value) = key.strip_prefix("banner-") {
 		return value
 			.split_once('-')
@@ -52,7 +55,9 @@ fn is_animated_key(key: &str) -> bool {
 	false
 }
 fn encoded_limit(key: &str) -> usize {
-	if let Some(rendition) = Rendition::parse(key) {
+	if let Some(cosmetic) = Cosmetic::parse(key) {
+		cosmetic.budget().encoded
+	} else if let Some(rendition) = Rendition::parse(key) {
 		media_encoded(&rendition)
 	} else if is_animated_key(key) {
 		MAX_ANIMATED_ENCODED
@@ -140,7 +145,127 @@ impl FrameBudget {
 }
 
 /// Determines the memory and dimension bounds for decoding the image identified by `key`.
+/// Collectible artwork. Every route is unofficial client behavior; see
+/// docs/discord-compatibility.md.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Cosmetic {
+	Decoration { animated: bool },
+	Nameplate,
+	AnimatedNameplate,
+	Effect,
+	EffectStill,
+	FrameLayer,
+}
+
+impl Cosmetic {
+	fn parse(key: &str) -> Option<Self> {
+		if let Some(asset) = key.strip_prefix("decoration-") {
+			return Some(Self::Decoration {
+				animated: asset.starts_with("a_"),
+			});
+		}
+		if key.starts_with("nameplate-anim-") {
+			return Some(Self::AnimatedNameplate);
+		}
+		if key.starts_with("nameplate-") {
+			return Some(Self::Nameplate);
+		}
+		if key.starts_with("effect-still-") {
+			return Some(Self::EffectStill);
+		}
+		if key.starts_with("effect-") {
+			return Some(Self::Effect);
+		}
+		key.starts_with("frame-").then_some(Self::FrameLayer)
+	}
+	fn animated(self) -> bool {
+		matches!(
+			self,
+			Self::Decoration { animated: true } | Self::AnimatedNameplate | Self::Effect
+		)
+	}
+	fn url(key: &str) -> Option<String> {
+		const CDN: &str = "https://cdn.discordapp.com";
+		match Self::parse(key)? {
+			Self::Decoration { animated } => {
+				let asset = key.strip_prefix("decoration-")?;
+				model::valid_avatar_hash(asset).then(|| {
+					format!(
+						"{CDN}/avatar-decoration-presets/{asset}.png?size=240&passthrough={animated}"
+					)
+				})
+			}
+			Self::AnimatedNameplate => {
+				let sku: Id = key.strip_prefix("nameplate-anim-")?.parse().ok()?;
+				(sku.0 != 0).then(|| format!("{CDN}/media/v1/collectibles-shop/{sku}/animated"))
+			}
+			Self::Nameplate => {
+				let asset = key.strip_prefix("nameplate-")?;
+				if !model::valid_nameplate_asset(asset) {
+					return None;
+				}
+				let mut url = url::Url::parse(&format!("{CDN}/assets/collectibles")).ok()?;
+				url.path_segments_mut()
+					.ok()?
+					.extend(asset.trim_end_matches('/').split('/'))
+					.push("static.png");
+				Some(url.into())
+			}
+			Self::Effect | Self::EffectStill => {
+				let value = key
+					.strip_prefix("effect-still-")
+					.or_else(|| key.strip_prefix("effect-"))?;
+				let (tag, hash) = value.split_once('-')?;
+				let asset = model::EffectAsset {
+					shop: tag == "s",
+					hash: hash.to_owned(),
+				};
+				(matches!(tag, "c" | "s") && asset.valid()).then(|| {
+					if asset.shop {
+						format!("{CDN}/media/v1/collectibles-shop/{hash}")
+					} else {
+						format!("{CDN}/assets/content/{hash}")
+					}
+				})
+			}
+			Self::FrameLayer => {
+				let (sku, layer) = key.strip_prefix("frame-")?.split_once('-')?;
+				let sku: Id = sku.parse().ok()?;
+				let layer: Id = layer.parse().ok()?;
+				(sku.0 != 0 && layer.0 != 0)
+					.then(|| format!("{CDN}/media/v1/collectibles-shop/{sku}/{layer}/static"))
+			}
+		}
+	}
+	/// Effects are 450 x 880 APNG layers of about 30 frames; frame layers are authored for
+	/// a 1200-unit card, so they keep more width than other still artwork.
+	fn budget(self) -> Budget {
+		let (fit, encoded, frames) = match self {
+			Self::Decoration { .. } => (256, 4 * 1024 * 1024, 16 * 1024 * 1024),
+			Self::Nameplate | Self::EffectStill => (ui::EMBED_EDGE, 8 * 1024 * 1024, 0),
+			Self::AnimatedNameplate => (ui::EMBED_EDGE, MAX_ANIMATED_ENCODED, 16 * 1024 * 1024),
+			Self::Effect => (ui::EMBED_EDGE, MAX_ANIMATED_ENCODED, 24 * 1024 * 1024),
+			Self::FrameLayer => (ui::FRAME_EDGE, 8 * 1024 * 1024, 0),
+		};
+		Budget {
+			fit,
+			encoded,
+			canvas: 4096,
+			alloc: 64 * 1024 * 1024,
+			frames: self.animated().then_some(FrameBudget {
+				fit,
+				bytes: frames,
+				count: 120,
+				shrinks: 1,
+			}),
+		}
+	}
+}
+
 fn budget(key: &str) -> Budget {
+	if let Some(cosmetic) = Cosmetic::parse(key) {
+		return cosmetic.budget();
+	}
 	let Some(rendition) = Rendition::parse(key) else {
 		let edge = decode_edge(key);
 		return Budget {
@@ -441,6 +566,9 @@ fn is_direct_gif_url(url: &str) -> bool {
 fn cdn_url(key: &str) -> Option<String> {
 	if key.starts_with("media:") {
 		return media_urls(&Rendition::parse(key)?).map(|urls| urls.primary);
+	}
+	if Cosmetic::parse(key).is_some() {
+		return Cosmetic::url(key);
 	}
 	if let Some(value) = key
 		.strip_prefix("anim:sticker-")
@@ -885,6 +1013,7 @@ fn disk_key(key: &str) -> Option<String> {
 		|| key.starts_with("media:")
 		|| key.starts_with("gif:")
 		|| key.starts_with("game:")
+		|| key.starts_with("nameplate-")
 	{
 		Some(format!("embed-{:x}", Sha256::digest(url.as_bytes())))
 	} else {
@@ -2491,6 +2620,76 @@ mod tests {
 			)
 			.is_none()
 		);
+	}
+
+	#[test]
+	fn cosmetic_urls_budgets_and_cache_names_are_confined() {
+		let hash = "149abd61a0e8a52895ef4e06e05dcba352a11fb76089554b3d726cec8bc1c981";
+		for (key, url) in [
+			(
+				"decoration-a_fed43ab12698df65902ba06727e20c0e".to_owned(),
+				"https://cdn.discordapp.com/avatar-decoration-presets/a_fed43ab12698df65902ba06727e20c0e.png?size=240&passthrough=true".to_owned(),
+			),
+			(
+				"decoration-fed43ab12698df65902ba06727e20c0e".to_owned(),
+				"https://cdn.discordapp.com/avatar-decoration-presets/fed43ab12698df65902ba06727e20c0e.png?size=240&passthrough=false".to_owned(),
+			),
+			(
+				"nameplate-nameplates/buffering.../1541529803809755246/".to_owned(),
+				"https://cdn.discordapp.com/assets/collectibles/nameplates/buffering.../1541529803809755246/static.png".to_owned(),
+			),
+			(
+				"nameplate-nameplates/it’s & fine/".to_owned(),
+				"https://cdn.discordapp.com/assets/collectibles/nameplates/it%E2%80%99s%20&%20fine/static.png".to_owned(),
+			),
+			(
+				"nameplate-anim-12".to_owned(),
+				"https://cdn.discordapp.com/media/v1/collectibles-shop/12/animated".to_owned(),
+			),
+			(
+				format!("effect-c-{hash}"),
+				format!("https://cdn.discordapp.com/assets/content/{hash}"),
+			),
+			(
+				format!("effect-still-s-{hash}"),
+				format!("https://cdn.discordapp.com/media/v1/collectibles-shop/{hash}"),
+			),
+			(
+				"frame-30-31".to_owned(),
+				"https://cdn.discordapp.com/media/v1/collectibles-shop/30/31/static".to_owned(),
+			),
+		] {
+			assert_eq!(cdn_url(&key).as_deref(), Some(url.as_str()), "{key}");
+		}
+		for bad in [
+			"decoration-../x",
+			"nameplate-nameplates/../avatars/",
+			"nameplate-anim-0",
+			"effect-x-aaaa",
+			"effect-c-../../x",
+			"frame-0-1",
+			"frame-1-../2",
+		] {
+			assert!(cdn_url(bad).is_none(), "{bad}");
+		}
+		assert!(is_animated_key(
+			"decoration-a_fed43ab12698df65902ba06727e20c0e"
+		));
+		assert!(!is_animated_key(
+			"decoration-fed43ab12698df65902ba06727e20c0e"
+		));
+		assert!(is_animated_key(&format!("effect-c-{hash}")));
+		assert!(!is_animated_key(&format!("effect-still-c-{hash}")));
+		assert!(!is_animated_key("frame-30-31"));
+		assert!(budget(&format!("effect-c-{hash}")).frames.is_some());
+		assert_eq!(budget("frame-30-31").fit, ui::FRAME_EDGE);
+		// Folder names are hashed before they reach the disk cache.
+		assert!(
+			disk_key("nameplate-nameplates/x/")
+				.unwrap()
+				.starts_with("embed-")
+		);
+		assert_eq!(disk_key("frame-30-31").as_deref(), Some("frame-30-31"));
 	}
 
 	#[test]

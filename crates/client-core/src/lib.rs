@@ -5243,6 +5243,7 @@ mod tests {
 					permissions: model::permissions::Snapshot::default(),
 					user: User {
 						primary_guild: None,
+						cosmetics: None,
 						id: Id(1),
 						name: "Synthetic".into(),
 						avatar: None,
@@ -5586,6 +5587,7 @@ mod tests {
 			channel: Id(1),
 			author: User {
 				primary_guild: None,
+				cosmetics: None,
 				id: Id(2),
 				name: "Synthetic".into(),
 				avatar: None,
@@ -5663,6 +5665,7 @@ mod tests {
 				channel: Id(1),
 				user: User {
 					primary_guild: None,
+					cosmetics: None,
 					id: Id(3),
 					name: "Other".into(),
 					avatar: None,
@@ -5875,6 +5878,7 @@ mod tests {
 			};
 			let user = || User {
 				primary_guild: None,
+				cosmetics: None,
 				id: Id(2),
 				name: "Synthetic".into(),
 				avatar: None,
@@ -6005,6 +6009,7 @@ mod tests {
 					permissions: model::permissions::Snapshot::default(),
 					user: User {
 						primary_guild: None,
+						cosmetics: None,
 						id: Id(2),
 						name: "Synthetic".into(),
 						avatar: None,

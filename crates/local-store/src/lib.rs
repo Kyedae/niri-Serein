@@ -1277,6 +1277,7 @@ impl LocalStore {
 				channel,
 				author: User {
 					primary_guild: None,
+					cosmetics: None,
 					id: parse(row.get(1)?)?,
 					name: row.get(2)?,
 					avatar: row.get(7)?,
@@ -3163,6 +3164,7 @@ mod tests {
 		assert_eq!(store.load_drafts(Id(1)).unwrap()[&Id(2)], "kept draft");
 		messages[0].mentions = vec![User {
 			primary_guild: None,
+			cosmetics: None,
 			id: Id(5),
 			name: "Mentioned user".into(),
 			avatar: None,
@@ -3368,6 +3370,7 @@ mod tests {
 				channel: Id(channel),
 				author: User {
 					primary_guild: None,
+					cosmetics: None,
 					id: Id(1),
 					name: "Synthetic".into(),
 					avatar: Some("0123456789abcdef0123456789abcdef".into()),
