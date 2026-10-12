@@ -877,7 +877,7 @@ impl MessagingUi {
 									user,
 									row,
 									8,
-									hovered || active,
+									hovered,
 									access.muted(),
 									state.demo,
 								);

@@ -296,6 +296,14 @@ pub struct MessagingUi {
 	message_requests_collapsed: bool,
 	/// Custom emoji that need Nitro stay out of `:` suggestions and are locked in pickers.
 	pub hide_nitro_emojis: bool,
+	/// Profile cosmetics shown on this device; hidden ones are not downloaded.
+	pub cosmetics: model::CosmeticPreferences,
+	/// Disk budgets and retention for downloaded images.
+	pub image_cache: model::CachePreferences,
+	/// Latest disk use of the media and shared-artwork caches, once measured.
+	pub image_cache_usage: Option<[model::CacheUsage; 2]>,
+	/// An image cache partition the owner asked to empty; the desktop consumes it.
+	pub clear_image_cache: Option<model::CachePartition>,
 	pub hide_title_bar: bool,
 	pub hide_window_decorations: bool,
 	pub custom_font: fonts::Settings,
@@ -3938,6 +3946,8 @@ impl MessagingUi {
 	}
 
 	pub fn show(&mut self, ui: &mut egui::Ui, state: &mut State) -> Vec<Command> {
+		self.avatars.cosmetics = self.cosmetics;
+		state.set_profile_cosmetics(self.cosmetics);
 		self.timeline.download.gif_favorites = state
 			.gifs
 			.favorites

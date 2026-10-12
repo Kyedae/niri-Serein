@@ -1133,6 +1133,7 @@ impl DiscordApi {
 				guild,
 				request,
 				with_mutuals,
+				cosmetics,
 			} => {
 				let mut path = format!(
 					"/users/{user}/profile?with_mutual_guilds={with_mutuals}&with_mutual_friends={with_mutuals}&with_mutual_friends_count=false"
@@ -1151,8 +1152,9 @@ impl DiscordApi {
 					}
 					// Optional names/artwork must not hold the entire profile behind slow reads
 					// or a shared service cooldown. Dropping these reads is safe: they never write.
-					let (effect, frame) = (profile.effect_sku, profile.frame_sku);
-					let (board, cosmetics) = tokio::join!(
+					let effect = profile.effect_sku.filter(|_| cosmetics.effects);
+					let frame = profile.frame_sku.filter(|_| cosmetics.frames);
+					let (board, catalog) = tokio::join!(
 						tokio::time::timeout(
 							Duration::from_secs(2),
 							self.load_profile_board_games(&mut profile),
@@ -1165,13 +1167,14 @@ impl DiscordApi {
 					if let Ok(result) = board {
 						result?;
 					}
-					if let Ok(result) = cosmetics {
+					if let Ok(result) = catalog {
 						let (effect, frame) = result?;
-						let mut enriched = profile.clone();
-						enriched.effect = effect.map(Box::new);
-						enriched.frame = frame.map(Box::new);
-						if enriched.valid() {
-							profile = enriched;
+						profile.effect = effect.map(Box::new);
+						profile.frame = frame.map(Box::new);
+						// Artwork that would exceed the profile bound is dropped, not the profile.
+						if !profile.valid() {
+							profile.effect = None;
+							profile.frame = None;
 						}
 					}
 					Ok(Box::new(profile))
@@ -2833,6 +2836,7 @@ mod tests {
 					guild: Some(model::Id(2)),
 					request: 9,
 					with_mutuals: true,
+					cosmetics: Default::default(),
 				})
 				.await
 		});
@@ -2868,6 +2872,7 @@ mod tests {
 				guild: None,
 				request: 10,
 				with_mutuals: true,
+				cosmetics: Default::default(),
 			})
 			.await,
 			Event::Profile {
@@ -2883,6 +2888,7 @@ mod tests {
 				guild: None,
 				request: 11,
 				with_mutuals: true,
+				cosmetics: Default::default(),
 			})
 			.await,
 			Event::Profile {

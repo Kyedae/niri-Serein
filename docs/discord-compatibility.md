@@ -32,13 +32,17 @@ establish it.
   take precedence. Details come from `GET /collectibles-products/{sku}`. This is the
   same optional read the clients make. It is bounded to 256 KiB, has a two-second
   deadline shared with board enrichment, and is cached for at most 64 SKUs per session.
-  Failures leave the profile without that cosmetic.
+  Only an expired or challenged session fails the profile. Timeouts, oversized or refused
+  products and other errors leave it without that cosmetic. Oversized and refused SKUs are
+  remembered for the session so they are not read again. Effects and frames hidden in
+  Settings skip this read.
 - **Effects** play layers from `/assets/content/{hash}` or
   `/media/v1/collectibles-shop/{hash}`. They use the official 450 x 880 canvas scaled to
   the card, z-order, `start`, `duration`, `loop` and `loopDelay`, and a 500 ms intro
-  delay. The timeline restarts when the card reopens, and one shared random index picks
-  among `randomizedSources`. With animation disabled or the window unfocused, the card
-  shows `staticFrameSrc`, falling back to the first frame of `reducedMotionSrc`.
+  delay. The timeline starts once every layer has loaded or failed, so a short opening
+  layer is not skipped while it downloads. It restarts when the card reopens, and one
+  shared random index picks among `randomizedSources`. With animation disabled or the
+  window unfocused, the card shows `staticFrameSrc`, falling back to the first frame of `reducedMotionSrc`.
 - **Frames** fetch static layers from `/media/v1/collectibles-shop/{sku}/{layer}/static`
   and scale them from `inner_width` (default 1200). Staples pin to the top or bottom and
   overflow by `overflow_top`/`overflow_bottom`/`overflow_horizontal`. Rails align inside
@@ -48,7 +52,8 @@ establish it.
 
 Unknown palettes, layer kinds, anchors, malformed values and expired items are dropped
 without rejecting the user, member row or profile. Display-name styles and cosmetic
-editing are not supported.
+editing are not supported. Settings › Appearance › Profile cosmetics hides any of the four
+on this device. This is a local display choice; nothing is sent to Discord.
 
 ## Guild voice moderation — October 8, 2026
 

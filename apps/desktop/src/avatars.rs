@@ -299,8 +299,12 @@ fn budget(key: &str) -> Budget {
 const MAX_AVATAR_ENCODED: usize = 512 * 1024;
 const MAX_LOTTIE_ENCODED: usize = 512 * 1024;
 const MAX_APPLICATION_METADATA: usize = 64 * 1024;
+// Default budgets; the owner chooses others in Settings › Storage.
+#[cfg(test)]
 const MAX_DISK: u64 = 1024 * 1024 * 1024;
+#[cfg(test)]
 const MAX_FILES: usize = 4096;
+#[cfg(test)]
 const RETENTION: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 const CACHE_ERROR: &str = "Images could not be cached; they remain available in memory";
 pub type Cleanup = mpsc::Receiver<Result<(), &'static str>>;
@@ -409,41 +413,54 @@ pub struct AvatarWorker {
 	clear: Arc<AtomicBool>,
 	cleanup: Option<Cleanup>,
 	bundled_only: bool,
+	limits: watch::Sender<model::CachePreferences>,
+	clear_partition: async_mpsc::Sender<model::CachePartition>,
+	usage: watch::Receiver<Option<Usage>>,
 }
+/// Disk use of the media and shared-artwork caches, in that order.
+pub type Usage = [model::CacheUsage; 2];
+/// Shared artwork lives below the account's media cache, so one removal clears both.
+const ARTWORK_DIR: &str = "artwork";
 impl AvatarWorker {
 	pub fn start(
 		runtime: &tokio::runtime::Runtime,
 		account: Id,
 		ctx: egui::Context,
+		limits: model::CachePreferences,
 	) -> Result<Self, &'static str> {
 		let root = local_store::data_dir()
 			.ok()
 			.map(|root| root.join("avatars").join(account.to_string()));
-		Self::start_at(runtime, root, ctx)
+		Self::start_inner(runtime, root, ctx, false, limits)
 	}
+	#[cfg(test)]
 	fn start_at(
 		runtime: &tokio::runtime::Runtime,
 		root: Option<PathBuf>,
 		ctx: egui::Context,
 	) -> Result<Self, &'static str> {
-		Self::start_inner(runtime, root, ctx, false)
+		Self::start_inner(runtime, root, ctx, false, Default::default())
 	}
 	pub fn start_bundled(
 		runtime: &tokio::runtime::Runtime,
 		ctx: egui::Context,
 	) -> Result<Self, &'static str> {
-		Self::start_inner(runtime, None, ctx, true)
+		Self::start_inner(runtime, None, ctx, true, Default::default())
 	}
 	fn start_inner(
 		runtime: &tokio::runtime::Runtime,
 		root: Option<PathBuf>,
 		ctx: egui::Context,
 		bundled_only: bool,
+		limits: model::CachePreferences,
 	) -> Result<Self, &'static str> {
 		let (requests, receive) = async_mpsc::channel(1024);
 		let (send, results) = result_channel(ctx.clone());
 		let wake = ctx.clone();
 		let (cancel, cancelled) = watch::channel(false);
+		let (limits, watched_limits) = watch::channel(limits);
+		let (clear_partition, clears) = async_mpsc::channel(4);
+		let (publish, usage) = watch::channel(None);
 		let clear = Arc::new(AtomicBool::new(false));
 		let cleanup_flag = clear.clone();
 		let (done, cleanup) = mpsc::sync_channel(1);
@@ -451,7 +468,19 @@ impl AvatarWorker {
 		std::thread::Builder::new()
 			.name("avatar-cache".into())
 			.spawn(move || {
-				handle.block_on(run(root.as_deref(), receive, send, cancelled, bundled_only));
+				handle.block_on(run(
+					root.as_deref(),
+					receive,
+					send,
+					cancelled,
+					bundled_only,
+					Control {
+						limits: watched_limits,
+						clears,
+						usage: publish,
+						wake: ctx.clone(),
+					},
+				));
 				let result = if cleanup_flag.load(Ordering::Acquire) && !bundled_only {
 					clear_directory(root.as_deref())
 				} else {
@@ -469,7 +498,29 @@ impl AvatarWorker {
 			clear,
 			cleanup: Some(cleanup),
 			bundled_only,
+			limits,
+			clear_partition,
+			usage,
 		})
+	}
+	/// Applies new disk budgets; the worker evicts down to them before its next read.
+	pub fn set_limits(&self, limits: model::CachePreferences) {
+		self.limits.send_if_modified(|current| {
+			let changed = *current != limits;
+			*current = limits;
+			changed
+		});
+	}
+	/// Empties one partition without stopping image loading. A repeated click while an
+	/// earlier removal is still queued needs no second request.
+	pub fn clear_partition(&self, partition: model::CachePartition) {
+		if !self.bundled_only {
+			let _ = self.clear_partition.try_send(partition);
+		}
+	}
+	/// Latest measured disk use, or `None` before the caches were opened.
+	pub fn usage(&self) -> Option<Usage> {
+		*self.usage.borrow()
 	}
 	pub fn request(&self, key: String) -> bool {
 		(ui::emoji::bundled_svg(&key).is_some() || (!self.bundled_only && cdn_url(&key).is_some()))
@@ -1021,18 +1072,111 @@ fn disk_key(key: &str) -> Option<String> {
 	}
 }
 
+/// Small artwork reused across conversations gets its own disk budget, so a burst of large
+/// media cannot evict the emoji, badges and decorations shown in almost every view.
+fn partition(key: &str) -> model::CachePartition {
+	const ARTWORK: [&str; 8] = [
+		"emoji-",
+		"badge-",
+		"clan-",
+		"role-icon-",
+		"guild-",
+		"default-",
+		"decoration-",
+		"nameplate-",
+	];
+	// Hover-only nameplate animations are large and rarely replayed.
+	if ARTWORK.iter().any(|prefix| key.starts_with(prefix))
+		&& !key.starts_with("nameplate-anim-")
+		&& !key.starts_with("emoji-unicode-")
+	{
+		model::CachePartition::Artwork
+	} else {
+		model::CachePartition::Media
+	}
+}
+
+fn partition_root(root: &Path, partition: model::CachePartition) -> PathBuf {
+	match partition {
+		model::CachePartition::Media => root.to_owned(),
+		model::CachePartition::Artwork => root.join(ARTWORK_DIR),
+	}
+}
+
 /// Cached PNG only; OS alerts never start an image download or block on disk from rendering.
 pub(crate) fn notification_image_path(account: Id, key: &str) -> Option<String> {
 	let name = disk_key(key)?;
 	if name.len() > 160 {
 		return None;
 	}
-	let root = local_store::data_dir().ok()?;
-	root.join("avatars")
-		.join(account.to_string())
+	let root = local_store::data_dir()
+		.ok()?
+		.join("avatars")
+		.join(account.to_string());
+	partition_root(&root, partition(key))
 		.join(format!("{name}.png"))
 		.to_str()
 		.map(str::to_owned)
+}
+
+/// Moves shared artwork cached before the artwork partition existed, once, so upgrading
+/// does not download every emoji and badge again. Hashed names cannot be classified and
+/// simply age out of the media cache.
+fn adopt_artwork(root: &Path) -> io::Result<()> {
+	let artwork = root.join(ARTWORK_DIR);
+	if artwork.exists() || !root.exists() {
+		return Ok(());
+	}
+	fs::create_dir_all(&artwork)?;
+	for entry in fs::read_dir(root)? {
+		let entry = entry?;
+		let name = entry.file_name();
+		let Some(key) = name.to_str().and_then(|name| name.strip_suffix(".png")) else {
+			continue;
+		};
+		if entry.file_type()?.is_file() && partition(key) == model::CachePartition::Artwork {
+			fs::rename(entry.path(), artwork.join(&name))?;
+		}
+	}
+	Ok(())
+}
+
+struct Control {
+	limits: watch::Receiver<model::CachePreferences>,
+	clears: async_mpsc::Receiver<model::CachePartition>,
+	usage: watch::Sender<Option<Usage>>,
+	/// Storage settings show usage as soon as a removal or new budget settles.
+	wake: egui::Context,
+}
+impl Control {
+	fn publish(&self, disks: &[Option<Disk>; 2]) {
+		let usage = match disks {
+			[Some(media), Some(artwork)] => Some([media.usage(), artwork.usage()]),
+			_ => None,
+		};
+		let changed = self.usage.send_if_modified(|current| {
+			let changed = *current != usage;
+			*current = usage;
+			changed
+		});
+		if changed {
+			self.wake.request_repaint();
+		}
+	}
+}
+
+fn open_disks(root: Option<&Path>, limits: model::CachePreferences) -> [Option<Disk>; 2] {
+	let Some(root) = root else {
+		return [None, None];
+	};
+	let _ = adopt_artwork(root);
+	let open = |partition, limit| {
+		Disk::open_with(partition_root(root, partition), limit, limits.retention()).ok()
+	};
+	[
+		open(model::CachePartition::Media, limits.media_limit()),
+		open(model::CachePartition::Artwork, limits.artwork_limit()),
+	]
 }
 
 async fn run(
@@ -1041,8 +1185,11 @@ async fn run(
 	results: ResultSender,
 	mut cancelled: watch::Receiver<bool>,
 	bundled_only: bool,
+	mut control: Control,
 ) {
-	let mut disk = root.and_then(|root| Disk::open(root.to_owned()).ok());
+	let limits = *control.limits.borrow_and_update();
+	let mut disks = open_disks(root, limits);
+	control.publish(&disks);
 	let client = (!bundled_only)
 		.then(|| {
 			reqwest::Client::builder()
@@ -1059,11 +1206,19 @@ async fn run(
 	let mut cooldown = Instant::now();
 	// Eight bounded loads overlap; each downloads and decodes off this loop, which owns the disk.
 	let mut jobs = tokio::task::JoinSet::new();
-	let (mut viewer, mut inline) = (VecDeque::<String>::new(), VecDeque::<String>::new());
+	// Opened pictures first, then small shared artwork, then everything else in order.
+	let (mut viewer, mut artwork, mut inline) = (
+		VecDeque::<String>::new(),
+		VecDeque::<String>::new(),
+		VecDeque::<String>::new(),
+	);
 	loop {
 		while jobs.len() < JOBS
 			&& !*cancelled.borrow()
-			&& let Some(key) = viewer.pop_front().or_else(|| inline.pop_front())
+			&& let Some(key) = viewer
+				.pop_front()
+				.or_else(|| artwork.pop_front())
+				.or_else(|| inline.pop_front())
 		{
 			if let Some((source, edge)) = ui::emoji::bundled_svg(&key) {
 				jobs.spawn(async move {
@@ -1090,6 +1245,7 @@ async fn run(
 				continue;
 			};
 			let persistent = disk_key(&key).is_some();
+			let disk = &mut disks[partition(&key) as usize];
 			let mut error = (persistent && disk.is_none()).then_some(CACHE_ERROR);
 			let cached = disk.as_mut().and_then(|disk| {
 				if !persistent {
@@ -1122,14 +1278,41 @@ async fn run(
 				let Some(Ok(loaded)) = completed else { break };
 				loaded
 			},
-			key = requests.recv(), if viewer.len() + inline.len() < QUEUED => {
+			key = requests.recv(), if viewer.len() + artwork.len() + inline.len() < QUEUED => {
 				let Some(key) = key else { break };
 				if *cancelled.borrow() { break; }
 				if Rendition::parse(&key).is_some_and(|rendition| rendition.lane == Lane::Viewer) {
 					viewer.push_back(key);
+				} else if partition(&key) == model::CachePartition::Artwork {
+					artwork.push_back(key);
 				} else {
 					inline.push_back(key);
 				}
+				continue;
+			},
+			changed = control.limits.changed() => {
+				if changed.is_err() { break; }
+				let limits = *control.limits.borrow_and_update();
+				let [media, artwork] = &mut disks;
+				for (disk, limit) in [(media, limits.media_limit()), (artwork, limits.artwork_limit())] {
+					if let Some(cache) = disk.as_mut()
+						&& cache.set_limits(limit, limits.retention()).is_err()
+					{
+						*disk = None;
+					}
+				}
+				control.publish(&disks);
+				continue;
+			},
+			partition = control.clears.recv() => {
+				let Some(partition) = partition else { break };
+				let disk = &mut disks[partition as usize];
+				if let Some(cache) = disk.as_mut()
+					&& cache.clear().is_err()
+				{
+					*disk = None;
+				}
+				control.publish(&disks);
 				continue;
 			},
 		};
@@ -1146,10 +1329,12 @@ async fn run(
 			break;
 		}
 		if disk_key(&key).is_some()
-			&& let (Some(disk), Some(bytes)) = (&mut disk, &fetched)
-			&& disk.write(&key, bytes).is_err()
+			&& let (Some(disk), Some(bytes)) = (&mut disks[partition(&key) as usize], &fetched)
 		{
-			error = Some(CACHE_ERROR);
+			if disk.write(&key, bytes).is_err() {
+				error = Some(CACHE_ERROR);
+			}
+			control.publish(&disks);
 		}
 		// Decoded results can wait for the UI; the encoded source is no longer needed.
 		drop(fetched);
@@ -1755,9 +1940,22 @@ struct Disk {
 	bytes: u64,
 	files: usize,
 	last_prune: Instant,
+	limit: model::DiskLimit,
+	retention: Duration,
 }
 impl Disk {
+	#[cfg(test)]
 	fn open(root: PathBuf) -> io::Result<Self> {
+		Self::open_with(
+			root,
+			model::DiskLimit {
+				bytes: MAX_DISK,
+				files: MAX_FILES,
+			},
+			RETENTION,
+		)
+	}
+	fn open_with(root: PathBuf, limit: model::DiskLimit, retention: Duration) -> io::Result<Self> {
 		fs::create_dir_all(&root)?;
 		#[cfg(unix)]
 		{
@@ -1769,9 +1967,35 @@ impl Disk {
 			bytes: 0,
 			files: 0,
 			last_prune: Instant::now(),
+			limit,
+			retention,
 		};
 		disk.prune(0, 0)?;
 		Ok(disk)
+	}
+	fn usage(&self) -> model::CacheUsage {
+		model::CacheUsage {
+			bytes: self.bytes,
+			files: self.files,
+		}
+	}
+	/// Smaller budgets or retention evict immediately; larger ones apply to later writes.
+	fn set_limits(&mut self, limit: model::DiskLimit, retention: Duration) -> io::Result<()> {
+		self.limit = limit;
+		self.retention = retention;
+		self.prune(0, 0)
+	}
+	/// Removes this partition's images but not nested partitions.
+	fn clear(&mut self) -> io::Result<()> {
+		for entry in fs::read_dir(&self.root)? {
+			let entry = entry?;
+			if entry.file_type()?.is_file() {
+				fs::remove_file(entry.path())?;
+			}
+		}
+		self.bytes = 0;
+		self.files = 0;
+		Ok(())
 	}
 	fn read(&mut self, key: &str) -> io::Result<Option<Vec<u8>>> {
 		let name = disk_key(key).ok_or(io::ErrorKind::InvalidInput)?;
@@ -1786,7 +2010,7 @@ impl Disk {
 			|| SystemTime::now()
 				.duration_since(metadata.modified()?)
 				.unwrap_or_default()
-				>= RETENTION
+				>= self.retention
 		{
 			return Ok(None);
 		}
@@ -1806,8 +2030,8 @@ impl Disk {
 		}
 		let name = disk_key(key).ok_or(io::ErrorKind::InvalidInput)?;
 		let path = self.root.join(format!("{name}.png"));
-		if self.bytes + bytes.len() as u64 > MAX_DISK
-			|| self.files + 1 > MAX_FILES
+		if self.bytes + bytes.len() as u64 > self.limit.bytes
+			|| self.files + 1 > self.limit.files
 			|| self.last_prune.elapsed() >= Duration::from_secs(24 * 60 * 60)
 		{
 			self.prune(bytes.len() as u64, 1)?;
@@ -1864,7 +2088,7 @@ impl Disk {
 					|| SystemTime::now()
 						.duration_since(modified)
 						.unwrap_or_default()
-						>= RETENTION
+						>= self.retention
 				{
 					fs::remove_file(entry.path())?;
 					continue;
@@ -1876,14 +2100,17 @@ impl Disk {
 					oldest.pop();
 				}
 			}
-			if self.bytes + reserve_bytes <= MAX_DISK && self.files + reserve_files <= MAX_FILES {
+			if self.bytes + reserve_bytes <= self.limit.bytes
+				&& self.files + reserve_files <= self.limit.files
+			{
 				break;
 			}
 			for (_, path, bytes) in oldest.into_sorted_vec() {
 				fs::remove_file(path)?;
 				self.bytes = self.bytes.saturating_sub(bytes);
 				self.files -= 1;
-				if self.bytes + reserve_bytes <= MAX_DISK && self.files + reserve_files <= MAX_FILES
+				if self.bytes + reserve_bytes <= self.limit.bytes
+					&& self.files + reserve_files <= self.limit.files
 				{
 					break;
 				}
@@ -2245,6 +2472,9 @@ mod tests {
 			clear: Arc::new(AtomicBool::new(false)),
 			cleanup: None,
 			bundled_only: false,
+			limits: watch::channel(Default::default()).0,
+			clear_partition: async_mpsc::channel(1).0,
+			usage: watch::channel(None).1,
 		};
 		let mut oversized = queued_image(1);
 		oversized
@@ -2620,6 +2850,84 @@ mod tests {
 			)
 			.is_none()
 		);
+	}
+
+	#[test]
+	fn shared_artwork_has_its_own_budget_and_is_adopted_once() {
+		use model::CachePartition::{Artwork, Media};
+		for key in [
+			"emoji-41771983423143937",
+			"badge-0123456789abcdef0123456789abcdef",
+			"clan-7-0123456789abcdef0123456789abcdef",
+			"role-icon-7-0123456789abcdef0123456789abcdef",
+			"guild-7-0123456789abcdef0123456789abcdef",
+			"default-3",
+			"decoration-a_fed43ab12698df65902ba06727e20c0e",
+			"nameplate-nameplates/x/",
+		] {
+			assert_eq!(partition(key), Artwork, "{key}");
+		}
+		for key in [
+			"7-0123456789abcdef0123456789abcdef",
+			"banner-7-0123456789abcdef0123456789abcdef",
+			"nameplate-anim-12",
+			"emoji-unicode-0-64",
+			"frame-30-31",
+			"anim:https://media.discordapp.net/x.gif",
+		] {
+			assert_eq!(partition(key), Media, "{key}");
+		}
+		let root = std::env::temp_dir().join(format!(
+			"serein-artwork-test-{}-{}",
+			std::process::id(),
+			SystemTime::now()
+				.duration_since(SystemTime::UNIX_EPOCH)
+				.unwrap()
+				.as_nanos()
+		));
+		fs::create_dir_all(&root).unwrap();
+		for name in ["emoji-5.png", "default-1.png", "7-0123.png", "embed-ab.png"] {
+			fs::write(root.join(name), [1, 2, 3]).unwrap();
+		}
+		adopt_artwork(&root).unwrap();
+		let artwork = root.join(ARTWORK_DIR);
+		assert!(artwork.join("emoji-5.png").exists() && artwork.join("default-1.png").exists());
+		assert!(root.join("7-0123.png").exists() && root.join("embed-ab.png").exists());
+		// Later starts leave files in place, even ones that would classify as artwork.
+		fs::write(root.join("emoji-6.png"), [1]).unwrap();
+		adopt_artwork(&root).unwrap();
+		assert!(root.join("emoji-6.png").exists());
+		fs::remove_file(root.join("emoji-6.png")).unwrap();
+		let limits = model::CachePreferences::default();
+		let [Some(mut media), Some(mut shared)] = open_disks(Some(&root), limits) else {
+			panic!("both partitions open");
+		};
+		// The media partition counts only its own files, not the nested artwork directory.
+		assert_eq!(media.usage().files, 2);
+		assert_eq!(shared.usage().files, 2);
+		// A smaller budget evicts at once; clearing one partition keeps the other.
+		media
+			.set_limits(model::DiskLimit { bytes: 3, files: 1 }, limits.retention())
+			.unwrap();
+		assert_eq!(media.usage().files, 1);
+		media.clear().unwrap();
+		assert_eq!(media.usage(), model::CacheUsage::default());
+		assert!(artwork.join("emoji-5.png").exists());
+		shared.clear().unwrap();
+		assert_eq!(fs::read_dir(&artwork).unwrap().count(), 0);
+		// Shorter retention removes images that were not shown within it.
+		fs::write(root.join("7-0123.png"), [1]).unwrap();
+		OpenOptions::new()
+			.write(true)
+			.open(root.join("7-0123.png"))
+			.unwrap()
+			.set_modified(SystemTime::now() - Duration::from_secs(8 * 86_400))
+			.unwrap();
+		media
+			.set_limits(limits.media_limit(), Duration::from_secs(7 * 86_400))
+			.unwrap();
+		assert_eq!(media.usage().files, 0);
+		clear_directory(Some(&root)).unwrap();
 	}
 
 	#[test]

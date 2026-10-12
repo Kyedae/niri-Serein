@@ -55,6 +55,8 @@ struct AvatarKey {
 #[derive(Default)]
 pub(crate) struct Avatars {
 	pub animate_gifs: bool,
+	/// Hidden cosmetics are neither painted nor requested.
+	pub cosmetics: model::CosmeticPreferences,
 	avatar_animation: bool,
 	animations: HashMap<String, Animation>,
 	no_animations: HashSet<String>,

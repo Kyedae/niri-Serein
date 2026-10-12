@@ -30,6 +30,8 @@ pub mod server_invites;
 pub mod server_roles;
 pub mod server_settings;
 pub use reading_preferences::ReadingPreferences;
+mod cache_preferences;
+pub use cache_preferences::*;
 mod cosmetics;
 pub use cosmetics::*;
 mod profile;

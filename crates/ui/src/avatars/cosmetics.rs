@@ -98,7 +98,7 @@ impl Avatars {
 		avatar: Rect,
 		demo: bool,
 	) {
-		if size < DECORATION_MIN || !ui.is_rect_visible(avatar) {
+		if !self.cosmetics.decorations || size < DECORATION_MIN || !ui.is_rect_visible(avatar) {
 			return;
 		}
 		let Some(decoration) = user
@@ -131,7 +131,7 @@ impl Avatars {
 		muted: bool,
 		demo: bool,
 	) {
-		if !ui.is_rect_visible(row) || !row.is_positive() {
+		if !self.cosmetics.nameplates || !ui.is_rect_visible(row) || !row.is_positive() {
 			return;
 		}
 		let Some(nameplate) = user
@@ -191,7 +191,31 @@ impl Avatars {
 			.paint_at(ui, visible);
 	}
 
-	/// Effect layers over a card. `elapsed` counts from when the card opened; `None`, a
+	/// Whether the effect can start playing: motion is allowed and every layer has its first
+	/// frame or failed to load. All layers are requested up front, so a short one-shot layer
+	/// is not skipped while it downloads after the timeline has already passed it.
+	pub(crate) fn effect_ready(
+		&mut self,
+		ui: &egui::Ui,
+		effect: &ProfileEffect,
+		demo: bool,
+	) -> bool {
+		if !self.animate_gifs || !ui.input(|input| input.focused) {
+			return false;
+		}
+		let mut ready = true;
+		for layer in &effect.layers {
+			let key = layer.asset.key();
+			if self.cosmetic(ui.ctx(), &key, demo).is_none()
+				&& !self.attempts.get(&key).is_some_and(|(_, failed)| *failed)
+			{
+				ready = false;
+			}
+		}
+		ready
+	}
+
+	/// Effect layers over a card. `elapsed` counts from when the layers were ready; `None`, a
 	/// disabled animation setting or an unfocused window shows the still artwork instead.
 	pub(crate) fn paint_effect(
 		&mut self,
@@ -620,6 +644,41 @@ mod tests {
 			avatars
 				.frame_shapes(&ctx, &frame, wide, screen, false, false)
 				.is_empty()
+		);
+	}
+
+	#[test]
+	fn hidden_cosmetics_are_neither_painted_nor_requested() {
+		let ctx = egui::Context::default();
+		let mut user = test_support::message(1, Id(1)).author;
+		user.cosmetics = Some(Box::new(test_support::synthetic_cosmetics()));
+		let avatar = Rect::from_min_size(pos2(10.0, 10.0), Vec2::splat(40.0));
+		let row = Rect::from_min_size(pos2(0.0, 0.0), vec2(240.0, 44.0));
+		let paint = |cosmetics| {
+			let mut avatars = Avatars {
+				cosmetics,
+				..Avatars::default()
+			};
+			ctx.run_ui(Default::default(), |ui| {
+				avatars.paint_decoration(ui, &user, 40.0, avatar, false);
+				avatars.paint_nameplate(ui, &user, row, 6, false, false, false);
+			})
+			.drop_without_applying_deltas();
+			avatars.take_requests()
+		};
+		let shown = paint(model::CosmeticPreferences::default());
+		assert!(shown.iter().any(|key| key.starts_with("decoration-")));
+		assert!(shown.iter().any(|key| key.starts_with("nameplate-")));
+		assert!(paint(model::CosmeticPreferences::HIDDEN).is_empty());
+		let only_nameplates = paint(model::CosmeticPreferences {
+			nameplates: true,
+			..model::CosmeticPreferences::HIDDEN
+		});
+		assert!(
+			only_nameplates
+				.iter()
+				.all(|key| key.starts_with("nameplate-"))
+				&& !only_nameplates.is_empty()
 		);
 	}
 

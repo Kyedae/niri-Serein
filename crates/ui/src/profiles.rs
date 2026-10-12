@@ -2715,6 +2715,7 @@ pub fn show_with_session(
 	// Overflow of an equipped frame beyond the card: top, bottom and each side.
 	let frame_overflow = data
 		.and_then(|d| d.frame.as_deref())
+		.filter(|_| avatars.cosmetics.frames)
 		.map(|frame| frame.overflow(width));
 	// The popout keeps an equipped frame's overflow on screen with the card.
 	let bounds = match frame_overflow {
@@ -3583,7 +3584,11 @@ pub fn show_with_session(
 										if let Some([top, ..]) = frame_overflow {
 											ui.add_space(top);
 										}
-										card(ui, avatars)
+										card(ui, avatars);
+										// Painted overflow does not grow the scroll area.
+										if let Some([_, bottom, _]) = frame_overflow {
+											ui.add_space(bottom);
+										}
 									},
 								);
 								ui.allocate_ui_with_layout(
@@ -3608,7 +3613,9 @@ pub fn show_with_session(
 								ui.add_space(top);
 							}
 							card(ui, avatars);
-							ui.add_space(20.0);
+							ui.add_space(
+								frame_overflow.map_or(20.0, |[_, bottom, _]| bottom + 20.0),
+							);
 							panel_action = full_panel(
 								ui,
 								&mut full_tab,
@@ -3721,17 +3728,25 @@ pub fn show_with_session(
 	action
 }
 
-/// Time since this card began showing an effect; it restarts whenever the card reopens.
-fn effect_clock(ctx: &egui::Context, user: Id, sku: Id, full: bool) -> std::time::Duration {
+/// Time since this card's effect became ready to play; it restarts whenever the card reopens.
+/// `None` until the layers have loaded, so the timeline does not run ahead of its artwork.
+fn effect_clock(
+	ctx: &egui::Context,
+	user: Id,
+	sku: Id,
+	full: bool,
+	ready: bool,
+) -> Option<std::time::Duration> {
 	let id = egui::Id::unique(("profile-effect-clock", user, sku, full));
 	let frame = ctx.cumulative_frame_nr();
 	let now = std::time::Instant::now();
-	let (start, _) = ctx
-		.data(|data| data.get_temp::<(std::time::Instant, u64)>(id))
+	let start = ctx
+		.data(|data| data.get_temp::<(Option<std::time::Instant>, u64)>(id))
 		.filter(|(_, last)| frame <= last + 1)
-		.unwrap_or((now, frame));
+		.and_then(|(start, _)| start)
+		.or(ready.then_some(now));
 	ctx.data_mut(|data| data.insert_temp(id, (start, frame)));
-	now.saturating_duration_since(start)
+	start.map(|start| now.saturating_duration_since(start))
 }
 
 /// The equipped profile frame and effect around and over a finished card.
@@ -3744,11 +3759,12 @@ fn paint_collectibles(
 	full: bool,
 	demo: bool,
 ) {
-	if let Some(effect) = data.effect.as_deref() {
-		let elapsed = effect_clock(ui.ctx(), data.user.id, effect.sku, full);
-		avatars.paint_effect(ui, effect, card, Some(elapsed), demo);
+	if let Some(effect) = data.effect.as_deref().filter(|_| avatars.cosmetics.effects) {
+		let ready = avatars.effect_ready(ui, effect, demo);
+		let elapsed = effect_clock(ui.ctx(), data.user.id, effect.sku, full, ready);
+		avatars.paint_effect(ui, effect, card, elapsed, demo);
 	}
-	let Some(frame) = data.frame.as_deref() else {
+	let Some(frame) = data.frame.as_deref().filter(|_| avatars.cosmetics.frames) else {
 		return;
 	};
 	// The popout floats over the app; the full profile keeps its frame inside the modal.
@@ -3901,6 +3917,27 @@ fn synthetic_frame() -> model::ProfileFrame {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn effect_timeline_waits_for_its_layers_and_restarts_on_reopen() {
+		let ctx = egui::Context::default();
+		let clock = |ready| {
+			let mut elapsed = None;
+			ctx.run_ui(Default::default(), |ui| {
+				elapsed = effect_clock(ui.ctx(), Id(1), Id(2), false, ready);
+			})
+			.drop_without_applying_deltas();
+			elapsed
+		};
+		assert!(clock(false).is_none() && clock(false).is_none());
+		assert!(clock(true).is_some());
+		// Once started it keeps running while the window loses focus.
+		assert!(clock(false).is_some());
+		// A frame without the card closes it; reopening waits for readiness again.
+		ctx.run_ui(Default::default(), |_| {})
+			.drop_without_applying_deltas();
+		assert!(clock(false).is_none());
+	}
 
 	#[test]
 	fn bright_profile_gradient_is_softened_without_flattening_the_body() {

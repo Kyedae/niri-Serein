@@ -376,7 +376,16 @@ impl State {
 			guild,
 			request: self.profile_request,
 			with_mutuals: self.user.as_ref().is_none_or(|own| own.id != user),
+			cosmetics: self.profile_cosmetics,
 		})
+	}
+	/// Applies the device's cosmetic preference. Profiles cached while effects or frames were
+	/// hidden lack their catalog details, so showing them again drops those entries.
+	pub fn set_profile_cosmetics(&mut self, value: model::CosmeticPreferences) {
+		let previous = std::mem::replace(&mut self.profile_cosmetics, value);
+		if (value.effects && !previous.effects) || (value.frames && !previous.frames) {
+			self.profile_cache.clear();
+		}
 	}
 	pub fn clear_profile(&mut self) -> Command {
 		self.cancel_user_note_read();
@@ -745,6 +754,7 @@ mod tests {
 				guild: None,
 				request: new,
 				with_mutuals: true,
+				cosmetics: Default::default(),
 			});
 			assert!(!state.profile.as_ref().unwrap().loading);
 			assert!(state.profile.as_ref().unwrap().error.is_some());
@@ -845,6 +855,27 @@ mod tests {
 			}
 			assert_eq!(state.profile_cache.len(), CACHE_ENTRIES);
 			assert!(state.profile_cache.bytes() <= CACHE_BYTES);
+			// Hiding cosmetics keeps cached profiles; showing effects again refetches them.
+			state.set_profile_cosmetics(model::CosmeticPreferences::HIDDEN);
+			assert_eq!(state.profile_cache.len(), CACHE_ENTRIES);
+			let Some(Command::Profile { cosmetics, .. }) =
+				state.request_profile_at(Id(999), None, now)
+			else {
+				panic!("missing request")
+			};
+			assert_eq!(cosmetics, model::CosmeticPreferences::HIDDEN);
+			state.set_profile_cosmetics(model::CosmeticPreferences {
+				decorations: true,
+				..model::CosmeticPreferences::HIDDEN
+			});
+			assert_eq!(state.profile_cache.len(), CACHE_ENTRIES);
+			state.set_profile_cosmetics(model::CosmeticPreferences::default());
+			assert!(state.profile_cache.is_empty());
+			for id in 1..=4 {
+				state
+					.profile_cache
+					.insert(Id(id), None, *profile(Id(id)), now);
+			}
 			state.apply(Envelope {
 				generation: state.generation,
 				event: Event::PermissionsChanged,
