@@ -3947,7 +3947,7 @@ impl MessagingUi {
 
 	pub fn show(&mut self, ui: &mut egui::Ui, state: &mut State) -> Vec<Command> {
 		self.avatars.cosmetics = self.cosmetics;
-		state.set_profile_cosmetics(self.cosmetics);
+		let cosmetics_refresh = state.set_profile_cosmetics(self.cosmetics);
 		self.timeline.download.gif_favorites = state
 			.gifs
 			.favorites
@@ -4031,6 +4031,7 @@ impl MessagingUi {
 		self.timeline.video.seen = false;
 		let side = self.drain_side_press();
 		let mut commands = Vec::new();
+		commands.extend(cosmetics_refresh);
 		// A server joined from an invite opens as soon as the Gateway delivers it.
 		commands.extend(state.navigate_after_join());
 		if let Some(action) = self.poll_creator.show(ui.ctx(), state, &mut self.avatars)

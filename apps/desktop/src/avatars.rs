@@ -1206,6 +1206,10 @@ async fn run(
 	let mut cooldown = Instant::now();
 	// Eight bounded loads overlap; each downloads and decodes off this loop, which owns the disk.
 	let mut jobs = tokio::task::JoinSet::new();
+	// A partition's clear generation, and the generation each in-flight download began in:
+	// downloads started before a clear finish for the UI but are not written back to disk.
+	let mut cleared = [0u64; 2];
+	let mut admitted = std::collections::HashMap::<String, u64>::new();
 	// Opened pictures first, then small shared artwork, then everything else in order.
 	let (mut viewer, mut artwork, mut inline) = (
 		VecDeque::<String>::new(),
@@ -1259,6 +1263,7 @@ async fn run(
 					}
 				}
 			});
+			admitted.insert(key.clone(), cleared[partition(&key) as usize]);
 			jobs.spawn(load(Job {
 				budget: budget(&key),
 				key,
@@ -1306,6 +1311,7 @@ async fn run(
 			},
 			partition = control.clears.recv() => {
 				let Some(partition) = partition else { break };
+				cleared[partition as usize] += 1;
 				let disk = &mut disks[partition as usize];
 				if let Some(cache) = disk.as_mut()
 					&& cache.clear().is_err()
@@ -1328,7 +1334,11 @@ async fn run(
 		if *cancelled.borrow() {
 			break;
 		}
-		if disk_key(&key).is_some()
+		let current = admitted
+			.remove(&key)
+			.is_some_and(|generation| generation == cleared[partition(&key) as usize]);
+		if current
+			&& disk_key(&key).is_some()
 			&& let (Some(disk), Some(bytes)) = (&mut disks[partition(&key) as usize], &fetched)
 		{
 			if disk.write(&key, bytes).is_err() {

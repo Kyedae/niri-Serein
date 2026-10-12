@@ -3737,15 +3737,16 @@ fn effect_clock(
 	full: bool,
 	ready: bool,
 ) -> Option<std::time::Duration> {
-	let id = egui::Id::unique(("profile-effect-clock", user, sku, full));
+	// One record per card kind, replaced when another profile or effect shows there.
+	let id = egui::Id::unique(("profile-effect-clock", full));
 	let frame = ctx.cumulative_frame_nr();
 	let now = std::time::Instant::now();
 	let start = ctx
-		.data(|data| data.get_temp::<(Option<std::time::Instant>, u64)>(id))
-		.filter(|(_, last)| frame <= last + 1)
-		.and_then(|(start, _)| start)
+		.data(|data| data.get_temp::<(Id, Id, Option<std::time::Instant>, u64)>(id))
+		.filter(|(shown, effect, _, last)| *shown == user && *effect == sku && frame <= last + 1)
+		.and_then(|(_, _, start, _)| start)
 		.or(ready.then_some(now));
-	ctx.data_mut(|data| data.insert_temp(id, (start, frame)));
+	ctx.data_mut(|data| data.insert_temp(id, (user, sku, start, frame)));
 	start.map(|start| now.saturating_duration_since(start))
 }
 
@@ -3933,6 +3934,11 @@ mod tests {
 		assert!(clock(true).is_some());
 		// Once started it keeps running while the window loses focus.
 		assert!(clock(false).is_some());
+		// Another profile in the same card restarts from its own readiness.
+		ctx.run_ui(Default::default(), |ui| {
+			assert!(effect_clock(ui.ctx(), Id(3), Id(2), false, false).is_none());
+		})
+		.drop_without_applying_deltas();
 		// A frame without the card closes it; reopening waits for readiness again.
 		ctx.run_ui(Default::default(), |_| {})
 			.drop_without_applying_deltas();

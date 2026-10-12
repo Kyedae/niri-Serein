@@ -191,9 +191,10 @@ impl Avatars {
 			.paint_at(ui, visible);
 	}
 
-	/// Whether the effect can start playing: motion is allowed and every layer has its first
-	/// frame or failed to load. All layers are requested up front, so a short one-shot layer
-	/// is not skipped while it downloads after the timeline has already passed it.
+	/// Whether the effect can start playing: motion is allowed and every layer has settled, with
+	/// its animation decoded, known to be still, or failed. The worker shows a first frame before
+	/// the rest decode, so starting then could let a short one-shot layer pass unseen. All layers
+	/// are requested up front for the same reason.
 	pub(crate) fn effect_ready(
 		&mut self,
 		ui: &egui::Ui,
@@ -206,10 +207,17 @@ impl Avatars {
 		let mut ready = true;
 		for layer in &effect.layers {
 			let key = layer.asset.key();
-			if self.cosmetic(ui.ctx(), &key, demo).is_none()
-				&& !self.attempts.get(&key).is_some_and(|(_, failed)| *failed)
-			{
+			if self.attempts.get(&key).is_some_and(|(_, failed)| *failed) {
+				continue;
+			}
+			let loaded = self.cosmetic(ui.ctx(), &key, demo).is_some();
+			let settled = self.animations.contains_key(&key) || self.no_animations.contains(&key);
+			if !loaded || !settled {
 				ready = false;
+				// Frames released while idle reload only on request.
+				if loaded && self.released.contains(&key) {
+					self.request(key);
+				}
 			}
 		}
 		ready
