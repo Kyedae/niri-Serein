@@ -103,6 +103,8 @@ pub struct TimelineView {
 	pub(super) threads_request: Option<Id>,
 	/// The starter message shown as a pseudo-row at the top of an exhausted thread.
 	starter_row: Option<Id>,
+	/// Whether the direct-message introduction leads the rows of an exhausted conversation.
+	intro_row: bool,
 	suppressed_deleted_highlight: BTreeSet<Id>,
 	pub(super) remove_preserved: Option<Id>,
 	toolbar: Option<(Id, egui::Rect)>,
@@ -656,6 +658,191 @@ fn starter_row(
 			});
 		});
 }
+/// Row id of the direct-message introduction; no message uses snowflake 0.
+const INTRO: Id = Id(0);
+const INTRO_ESTIMATE: f32 = 236.0;
+
+/// The other person in the selected one-to-one conversation, once its whole history is
+/// loaded: the official client opens such a conversation with their introduction.
+fn intro_user(state: &State) -> Option<&model::User> {
+	let channel = state.selected.and_then(|id| state.channel(id))?;
+	(channel.kind == 1
+		&& state.freshness == model::Freshness::Fresh
+		&& !state.history_pending
+		&& !state.history_targeted
+		&& state.history_before.is_none()
+		&& state.history_after.is_none()
+		&& state.older_exhausted)
+		.then(|| channel.recipients.first())
+		.flatten()
+}
+
+/// Height key for the introduction: its layout depends on the person and what is known.
+fn intro_key(user: &model::User, state: &State) -> u64 {
+	let mut hasher = DefaultHasher::new();
+	user.id.hash(&mut hasher);
+	user.name.hash(&mut hasher);
+	state
+		.known_profile(user.id)
+		.map(|profile| profile.mutual_guilds.len())
+		.hash(&mut hasher);
+	hasher.finish()
+}
+
+/// "This is the beginning of your direct message history" header, as in the official client.
+fn dm_intro(
+	ui: &mut egui::Ui,
+	user: &model::User,
+	state: &State,
+	avatars: &mut crate::avatars::Avatars,
+	profile: &mut crate::profiles::ProfileSession,
+	width: f32,
+) -> Option<crate::user_menu::Action> {
+	use crate::user_menu::Action;
+	let colors = crate::design::palette(ui);
+	let mut action = None;
+	egui::Frame::NONE
+		.inner_margin(egui::Margin {
+			left: 16,
+			right: 16,
+			top: 16,
+			bottom: 4,
+		})
+		.show(ui, |ui| {
+			ui.set_min_width((width - 32.0).max(1.0));
+			ui.spacing_mut().item_spacing.y = 8.0;
+			let avatar = avatars.show(ui, user, 80.0, state.demo);
+			profile.person_click(ui, &avatar, None, user);
+			let name = state.user_display_name(user).to_owned();
+			let heading = ui.add(
+				egui::Label::new(
+					crate::design::semibold(ui, name.as_str(), 30.0).color(colors.text_strong),
+				)
+				.sense(egui::Sense::click())
+				.selectable(false),
+			);
+			profile.person_click(ui, &heading, None, user);
+			if let Some(username) = crate::profiles::known_username(state, user.id) {
+				ui.label(RichText::new(username).size(20.0).color(colors.text));
+			}
+			let text = crate::i18n::translate_args("timeline-dm-intro", &[("name", name.as_str())]);
+			let mut job = egui::text::LayoutJob::default();
+			let font = egui::FontId::proportional(15.0);
+			let plain = egui::TextFormat::simple(font.clone(), colors.text);
+			let bold = egui::TextFormat::simple(
+				egui::FontId::new(15.0, crate::design::semibold_family(ui.ctx())),
+				colors.text_strong,
+			);
+			match text.rfind(name.as_str()).filter(|_| !name.is_empty()) {
+				Some(at) => {
+					job.append(&text[..at], 0.0, plain.clone());
+					job.append(&name, 0.0, bold);
+					job.append(&text[at + name.len()..], 0.0, plain);
+				}
+				None => job.append(&text, 0.0, plain),
+			}
+			ui.add(egui::Label::new(job).wrap().selectable(false));
+			ui.horizontal_wrapped(|ui| {
+				ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+				if let Some(known) = state.known_profile(user.id)
+					&& !known.mutual_guilds.is_empty()
+				{
+					ui.horizontal(|ui| {
+						ui.spacing_mut().item_spacing.x = -4.0;
+						for mutual in known.mutual_guilds.iter().take(3) {
+							if let Some(guild) = state.guilds.iter().find(|g| g.id == mutual.id) {
+								let (rect, _) = ui.allocate_exact_size(
+									egui::Vec2::splat(24.0),
+									egui::Sense::hover(),
+								);
+								ui.painter().circle_filled(rect.center(), 13.0, colors.chat);
+								avatars.paint_guild(ui, guild, rect, state.demo, 12);
+							}
+						}
+					});
+					let count = known.mutual_guilds.len();
+					let label = crate::i18n::translate(if count == 1 {
+						"profiles-show-mutual-server"
+					} else {
+						"profiles-show-mutual-servers"
+					});
+					ui.label(
+						RichText::new(format!("{count} {label}"))
+							.size(14.0)
+							.color(colors.muted),
+					);
+					ui.label(RichText::new("•").color(colors.muted));
+				}
+				let enabled = crate::profiles::actions_enabled(state);
+				let button = |ui: &mut egui::Ui,
+				              label: &str,
+				              fill: egui::Color32,
+				              text: egui::Color32,
+				              on: bool| {
+					ui.add_enabled(
+						on,
+						egui::Button::new(RichText::new(label).size(14.0).color(text))
+							.fill(fill)
+							.corner_radius(8)
+							.min_size(egui::vec2(0.0, 32.0)),
+					)
+				};
+				let blocked = state.user_blocked(user.id) == Some(true);
+				if crate::profiles::friend_target(state, user) && !blocked {
+					let friend = state.friends().any(|friend| friend.id == user.id);
+					let request = state
+						.pending_friends()
+						.find(|(person, _, _)| person.id == user.id)
+						.map(|(_, _, incoming)| *incoming);
+					let known = state.friends_known() && state.friend_requests_known();
+					if !friend {
+						let (label, wanted, primary) = match request {
+							Some(true) => (
+								"profiles-friend-action-accept",
+								Some(Action::AcceptFriend(user.id)),
+								true,
+							),
+							Some(false) => ("profiles-friend-action-sent", None, false),
+							None => ("friends-add", Some(Action::AddFriend(user.clone())), true),
+						};
+						let (fill, text) = if primary {
+							(colors.accent, colors.accent_text)
+						} else {
+							(colors.raised, colors.text)
+						};
+						if button(
+							ui,
+							&crate::i18n::translate(label),
+							fill,
+							text,
+							enabled && known && wanted.is_some(),
+						)
+						.clicked()
+						{
+							action = wanted;
+						}
+					}
+				}
+				if crate::profiles::friend_target(state, user)
+					&& state.user_blocked(user.id).is_some()
+				{
+					let label = crate::i18n::translate(if blocked {
+						"user-menu-contents-unblock"
+					} else {
+						"user-menu-contents-block"
+					});
+					if button(ui, &label, colors.raised, colors.text_strong, enabled).clicked() {
+						action = Some(Action::Block {
+							user: user.id,
+							blocked: !blocked,
+						});
+					}
+				}
+			});
+		});
+	action
+}
+
 /// Loaded and private (ephemeral) messages of the selected conversation in id order.
 fn display_rows<'a>(state: &'a State) -> impl Iterator<Item = &'a Message> + 'a {
 	let mut private: Vec<&Message> = state
@@ -1883,6 +2070,8 @@ impl TimelineView {
 				&& state.older_exhausted
 		});
 		let starter_id = starter.map(|m| m.id);
+		let intro = intro_user(state).cloned();
+		let intro_height_key = intro.as_ref().map(|user| intro_key(user, state));
 		let mut layout_changed = false;
 		if self.revision != state.revision {
 			// Member/presence and other unrelated updates must not restore the scroll
@@ -1903,8 +2092,12 @@ impl TimelineView {
 		let changed = self.revision == u64::MAX
 			|| layout_changed
 			|| dimensions_changed
-			|| self.starter_row != starter_id;
+			|| self.starter_row != starter_id
+			|| self.intro_row != intro.is_some()
+			|| intro_height_key
+				.is_some_and(|key| self.heights.get(&INTRO).is_some_and(|(old, _)| *old != key));
 		self.starter_row = starter_id;
+		self.intro_row = intro.is_some();
 		if changed || self.revision != state.revision || self.width != width {
 			self.measured_rows.clear();
 		}
@@ -1921,8 +2114,11 @@ impl TimelineView {
 			self.text_size = text_size;
 			self.font_revision = font_revision;
 			self.scale = scale;
-			let row_ids: Vec<_> = starter_id
+			let row_ids: Vec<_> = intro
+				.as_ref()
+				.map(|_| INTRO)
 				.into_iter()
+				.chain(starter_id)
 				.chain(display_rows(state).map(|message| message.id))
 				.collect();
 			self.heights
@@ -1989,6 +2185,14 @@ impl TimelineView {
 			for id in stale_heights {
 				self.heights.remove(&id);
 			}
+			if let Some(key) = intro_height_key {
+				let height = match self.heights.get(&INTRO) {
+					Some((old, height)) if *old == key => *height,
+					_ => INTRO_ESTIMATE,
+				};
+				self.rows.insert(0, (INTRO, height));
+				lead_basis += height;
+			}
 			lead_rows = Some(lead_basis);
 			if !self.following
 				&& let Some((id, inset)) = self.anchor
@@ -2047,7 +2251,7 @@ impl TimelineView {
 				}
 			}
 			return;
-		} else if empty && history_available && !welcome {
+		} else if empty && history_available && !welcome && intro.is_none() {
 			ui.label(crate::i18n::translate_if_key(match state.freshness {
 				model::Freshness::Loading => "timeline-show-with-scroll-loading-messages",
 				model::Freshness::Unavailable => {
@@ -2253,6 +2457,7 @@ impl TimelineView {
 			self.leading_rendered = 0;
 		}
 		let mut measurements = Vec::new();
+		let mut intro_action = None;
 		let mut selected_reply = None;
 		// ScrollArea consumes wheel input while applying it; retain the viewing gesture.
 		let scroll_delta = wheel.y + autoscroll_delta;
@@ -2330,6 +2535,18 @@ impl TimelineView {
 				}
 				end = index + 1;
 				let id = self.rows[index].0;
+				if id == INTRO
+					&& let Some(user) = intro.as_ref()
+				{
+					let response = ui
+						.scope_builder(egui::UiBuilder::new().scope_id(row_id), |ui| {
+							intro_action = dm_intro(ui, user, state, avatars, profile, width)
+								.or(intro_action.take());
+						})
+						.response;
+					measurements.push((id, intro_key(user, state), response.rect.height()));
+					continue;
+				}
 				if Some(id) == self.starter_row
 					&& let Some(starter) = state.thread_starter()
 				{
@@ -4028,6 +4245,9 @@ impl TimelineView {
 			self.mark_read = Some(latest);
 		}
 		let mut reflow = false;
+		if let Some(action) = intro_action {
+			self.user_action = Some(action);
+		}
 		for (id, key, height) in measurements {
 			self.measured_rows.insert(id);
 			if self

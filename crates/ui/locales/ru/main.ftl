@@ -4723,3 +4723,6 @@ composer-placeholder = Сообщение
 composer-placeholder-channel = Написать в #{ $channel }
 # Context: composer_placeholder
 composer-placeholder-direct = Написать @{ $name }
+
+# Context: timeline_dm_intro
+timeline-dm-intro = Это начало истории ваших личных сообщений с { $name }.

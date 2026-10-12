@@ -4816,3 +4816,6 @@ composer-placeholder = 訊息
 composer-placeholder-channel = 傳送訊息至 #{ $channel }
 # Context: composer_placeholder
 composer-placeholder-direct = 傳送訊息給 @{ $name }
+
+# Context: timeline_dm_intro
+timeline-dm-intro = 這是你與 { $name } 的私訊紀錄的開頭。

@@ -4722,3 +4722,6 @@ composer-placeholder = Wiadomość
 composer-placeholder-channel = Napisz na #{ $channel }
 # Context: composer_placeholder
 composer-placeholder-direct = Napisz do @{ $name }
+
+# Context: timeline_dm_intro
+timeline-dm-intro = To początek Twojej historii wiadomości prywatnych z { $name }.

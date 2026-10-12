@@ -4717,3 +4717,6 @@ composer-placeholder = Message
 composer-placeholder-channel = Envoyer un message dans #{ $channel }
 # Context: composer_placeholder
 composer-placeholder-direct = Envoyer un message à @{ $name }
+
+# Context: timeline_dm_intro
+timeline-dm-intro = Ceci est le début de votre historique de messages privés avec { $name }.

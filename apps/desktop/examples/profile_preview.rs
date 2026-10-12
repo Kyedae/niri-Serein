@@ -660,6 +660,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 			| "channel-links"
 			| "channel-link-replies"
 			| "dm-tags"
+			| "dm-intro"
 			| "account"
 			| "appearance"
 			| "storage"
@@ -801,6 +802,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				});
 			} else if page == "dm-tags" {
 				let _ = state.select(model::Id(22));
+			} else if page == "dm-intro" {
+				// A short synthetic conversation whose whole history fits one page.
+				state.gateway_connected = true;
+				state.auth = client_core::auth::AuthState::Authenticated;
+				if let Some(client_core::Command::History { request, .. }) =
+					state.select(model::Id(22))
+				{
+					let messages = (0..4u64)
+						.rev()
+						.map(|n| {
+							let mut message = test_support::message(
+								1_000_000 + n * 9_000_000_000_000,
+								model::Id(22),
+							);
+							message.content = [
+								"Hey!",
+								"Synthetic hello",
+								"How was the trip?",
+								"Great, thanks",
+							][n as usize]
+								.into();
+							message.attachments.clear();
+							message.embeds.clear();
+							message.reactions = Some(vec![]);
+							message
+						})
+						.collect();
+					state.apply(client_core::Envelope {
+						generation: state.generation,
+						event: client_core::Event::History {
+							channel: model::Id(22),
+							request,
+							older: false,
+							messages,
+						},
+					});
+				}
 			} else if page.starts_with("forum") {
 				state.gateway_connected = true;
 				state.auth = client_core::auth::AuthState::Authenticated;
@@ -839,7 +877,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				);
 			} else if matches!(
 				page.as_str(),
-				"member-tags" | "dm-tags" | "markdown" | "channel-links" | "channel-link-replies"
+				"member-tags"
+					| "dm-tags" | "dm-intro"
+					| "markdown" | "channel-links"
+					| "channel-link-replies"
 			) {
 				// State is primed above; the normal offline messaging surface renders the list.
 			} else if page == "slash-commands" {

@@ -592,13 +592,13 @@ pub(crate) fn report_button(ui: &mut egui::Ui, user: &User) {
 	}
 }
 
-fn friend_target(state: &State, user: &User) -> bool {
+pub(crate) fn friend_target(state: &State, user: &User) -> bool {
 	!user.webhook
 		&& user.kind == model::AccountKind::Human
 		&& state.user.as_ref().is_some_and(|own| own.id != user.id)
 }
 /// Whether the account may send relationship and moderation requests right now.
-fn actions_enabled(state: &State) -> bool {
+pub(crate) fn actions_enabled(state: &State) -> bool {
 	!state.user_action_pending()
 		&& (state.demo
 			|| (state.gateway_connected
