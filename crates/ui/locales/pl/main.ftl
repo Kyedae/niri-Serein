@@ -4560,3 +4560,62 @@ profiles-activity-empty = Brak udostępnionej aktywności.
 profiles-mutuals-empty = Nothing to show here.
 
 reading-double-click-reaction = Double-click reaction
+
+# Context: badges
+badges-nitro = Nitro
+# Context: badges
+badges-rarity-common = Pospolita
+# Context: badges
+badges-rarity-rare = Rzadka
+# Context: badges
+badges-rarity-epic = Epicka
+# Context: badges
+badges-rarity-mythic = Mityczna
+# Context: badges
+badges-always-visible = Zawsze widoczna na profilu
+# Context: badges
+badges-click-show = Kliknij, aby pokazać
+# Context: badges
+badges-click-hide = Kliknij, aby ukryć
+# Context: badges
+badges-customize-title = Dostosuj swoje odznaki
+# Context: badges
+badges-customize-hint = Przeciągnij, aby zmienić kolejność, i ukryj te, których inni nie powinni widzieć.
+# Context: badges
+badges-none = Brak odznak do wyświetlenia.
+# Context: badges
+badges-reset = Resetuj
+# Context: badges
+badges-saving = Zapisywanie…
+# Context: badges
+badges-save = Zapisz
+# Context: badges
+badges-view = Zobacz odznaki
+# Context: badges
+badges-your = Twoje odznaki
+# Context: badges
+badges-user = Odznaki użytkownika { $name }
+# Context: badges
+badges-browse = Przeglądaj swoje odznaki i odkrywaj nowe do zdobycia.
+# Context: badges
+badges-available = Do odblokowania
+# Context: badges
+badges-customize-button = Dostosuj swoje odznaki
+# Context: badges
+badges-close = Zamknij
+# Context: badges
+badges-locked = Jeszcze nie odblokowano
+# Context: badges
+badges-date-unlocked = Data odblokowania
+# Context: badges
+badges-rarity = Rzadkość
+# Context: badges
+badges-max-level = Osiągnięto najwyższy poziom tej odznaki.
+# Context: badges
+badges-next-level = Następny poziom: { $tier }
+# Context: badges
+badges-all-levels = Pokaż wszystkie poziomy
+# Context: badges
+badges-hide-levels = Ukryj poziomy
+# Context: badges
+badges-manage = Zarządzaj odznakami

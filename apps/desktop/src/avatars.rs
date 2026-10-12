@@ -92,6 +92,8 @@ fn decode_edge(key: &str) -> u32 {
 		|| key.starts_with("member-banner-")
 	{
 		ui::EMBED_EDGE
+	} else if key.starts_with("badge-art:") {
+		256
 	} else {
 		128
 	}
@@ -743,10 +745,14 @@ fn cdn_url(key: &str) -> Option<String> {
 	if let Some(source) = key.strip_prefix("gif:") {
 		return model::valid_gif_preview(source).then(|| source.to_owned());
 	}
-	// Profile badge and server-tag artwork hashes arrive only inside a requested profile.
-	if let Some(hash) = key.strip_prefix("badge-") {
-		return model::valid_avatar_hash(hash)
-			.then(|| format!("https://cdn.discordapp.com/badge-icons/{hash}.png?size=64"));
+	// Catalog artwork arrives as full Discord CDN addresses inside a requested badge catalog.
+	if let Some(url) = key.strip_prefix("badge-art:") {
+		return model::badges::valid_badge_url(url).then(|| url.to_owned());
+	}
+	// Profile badge and server-tag artwork names arrive only inside a requested profile.
+	if let Some(icon) = key.strip_prefix("badge-") {
+		return model::valid_badge_icon(icon)
+			.then(|| format!("https://cdn.discordapp.com/badge-icons/{icon}.png?size=64"));
 	}
 	if let Some(value) = key.strip_prefix("clan-") {
 		let (guild, hash) = value.split_once('-')?;
@@ -1069,6 +1075,7 @@ fn disk_key(key: &str) -> Option<String> {
 		|| key.starts_with("gif:")
 		|| key.starts_with("game:")
 		|| key.starts_with("nameplate-")
+		|| key.starts_with("badge-art:")
 	{
 		Some(format!("embed-{:x}", Sha256::digest(url.as_bytes())))
 	} else {

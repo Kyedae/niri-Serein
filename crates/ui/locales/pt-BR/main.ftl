@@ -4555,3 +4555,62 @@ profiles-activity-empty = Nenhuma atividade compartilhada.
 profiles-mutuals-empty = Nothing to show here.
 
 reading-double-click-reaction = Double-click reaction
+
+# Context: badges
+badges-nitro = Nitro
+# Context: badges
+badges-rarity-common = Comum
+# Context: badges
+badges-rarity-rare = Rara
+# Context: badges
+badges-rarity-epic = Épica
+# Context: badges
+badges-rarity-mythic = Mítica
+# Context: badges
+badges-always-visible = Sempre exibida no seu perfil
+# Context: badges
+badges-click-show = Clique para mostrar
+# Context: badges
+badges-click-hide = Clique para ocultar
+# Context: badges
+badges-customize-title = Personalize suas insígnias
+# Context: badges
+badges-customize-hint = Arraste para reordenar e oculte as que você não quer que outros vejam.
+# Context: badges
+badges-none = Nenhuma insígnia para mostrar.
+# Context: badges
+badges-reset = Redefinir
+# Context: badges
+badges-saving = Salvando…
+# Context: badges
+badges-save = Salvar
+# Context: badges
+badges-view = Ver insígnias
+# Context: badges
+badges-your = Suas insígnias
+# Context: badges
+badges-user = Insígnias de { $name }
+# Context: badges
+badges-browse = Navegue pelas suas insígnias e descubra novas que você pode desbloquear.
+# Context: badges
+badges-available = Disponíveis para desbloquear
+# Context: badges
+badges-customize-button = Personalizar suas insígnias
+# Context: badges
+badges-close = Fechar
+# Context: badges
+badges-locked = Ainda não desbloqueada
+# Context: badges
+badges-date-unlocked = Data de desbloqueio
+# Context: badges
+badges-rarity = Raridade
+# Context: badges
+badges-max-level = Você alcançou o nível mais alto desta insígnia.
+# Context: badges
+badges-next-level = Próximo nível: { $tier }
+# Context: badges
+badges-all-levels = Ver todos os níveis
+# Context: badges
+badges-hide-levels = Ocultar níveis
+# Context: badges
+badges-manage = Gerenciar insígnias

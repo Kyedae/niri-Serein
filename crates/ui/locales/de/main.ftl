@@ -4555,3 +4555,62 @@ profiles-activity-empty = Keine geteilte Aktivität.
 profiles-mutuals-empty = Nothing to show here.
 
 reading-double-click-reaction = Double-click reaction
+
+# Context: badges
+badges-nitro = Nitro
+# Context: badges
+badges-rarity-common = Gewöhnlich
+# Context: badges
+badges-rarity-rare = Selten
+# Context: badges
+badges-rarity-epic = Episch
+# Context: badges
+badges-rarity-mythic = Mythisch
+# Context: badges
+badges-always-visible = Wird immer im Profil angezeigt
+# Context: badges
+badges-click-show = Zum Anzeigen klicken
+# Context: badges
+badges-click-hide = Zum Ausblenden klicken
+# Context: badges
+badges-customize-title = Abzeichen anpassen
+# Context: badges
+badges-customize-hint = Ziehen zum Umsortieren; blende aus, was andere nicht sehen sollen.
+# Context: badges
+badges-none = Noch keine Abzeichen.
+# Context: badges
+badges-reset = Zurücksetzen
+# Context: badges
+badges-saving = Wird gespeichert …
+# Context: badges
+badges-save = Speichern
+# Context: badges
+badges-view = Abzeichen ansehen
+# Context: badges
+badges-your = Deine Abzeichen
+# Context: badges
+badges-user = Abzeichen von { $name }
+# Context: badges
+badges-browse = Sieh dir deine Abzeichen an und entdecke neue, die du freischalten kannst.
+# Context: badges
+badges-available = Freischaltbar
+# Context: badges
+badges-customize-button = Abzeichen anpassen
+# Context: badges
+badges-close = Schließen
+# Context: badges
+badges-locked = Noch nicht freigeschaltet
+# Context: badges
+badges-date-unlocked = Freigeschaltet am
+# Context: badges
+badges-rarity = Seltenheit
+# Context: badges
+badges-max-level = Du hast die höchste Stufe dieses Abzeichens erreicht.
+# Context: badges
+badges-next-level = Nächste Stufe: { $tier }
+# Context: badges
+badges-all-levels = Alle Stufen anzeigen
+# Context: badges
+badges-hide-levels = Stufen ausblenden
+# Context: badges
+badges-manage = Abzeichen verwalten

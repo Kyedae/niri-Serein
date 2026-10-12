@@ -51,6 +51,12 @@ impl ProfileCache {
 			.map(|entry| size_of::<CachedProfile>() + entry.data.bytes())
 			.sum()
 	}
+	/// Updates every cached view of `user` in place.
+	pub(crate) fn update(&mut self, user: Id, change: impl Fn(&mut UserProfile)) {
+		for entry in self.entries.iter_mut().filter(|entry| entry.user == user) {
+			change(&mut entry.data);
+		}
+	}
 	pub fn len(&self) -> usize {
 		self.entries.len()
 	}
@@ -85,7 +91,84 @@ pub struct OwnProfile {
 	generation: u64,
 }
 
+/// The account's pending badge settings write.
+#[derive(Default)]
+pub struct BadgeEditor {
+	pub saving: bool,
+	pub error: Option<&'static str>,
+	/// Increments when a write is confirmed, so open editors can drop their draft.
+	pub saved: u64,
+	request: u64,
+}
+
 impl State {
+	/// Saves the account's badge order and hidden set. Demo sessions confirm locally.
+	pub fn save_badge_settings(
+		&mut self,
+		settings: model::badges::BadgeSettings,
+	) -> Option<Command> {
+		if self.badge_editor.saving || !settings.valid() || self.user.is_none() {
+			if !settings.valid() {
+				self.badge_editor.error = Some("Badge settings are invalid");
+			}
+			return None;
+		}
+		if !self.demo && (self.auth != AuthState::Authenticated || !self.gateway_connected) {
+			self.badge_editor.error = Some("Badge settings need a connected session");
+			return None;
+		}
+		self.badge_editor.request = self.badge_editor.request.wrapping_add(1);
+		self.badge_editor.saving = true;
+		self.badge_editor.error = None;
+		Some(Command::BadgeSettings {
+			request: self.badge_editor.request,
+			settings,
+		})
+	}
+	pub(crate) fn apply_badge_settings(
+		&mut self,
+		request: u64,
+		result: Result<model::badges::BadgeSettings, Failure>,
+	) {
+		if let Err(failure) = &result
+			&& failure.ends_session()
+			&& *failure != Failure::Capacity
+		{
+			self.fail(*failure);
+			return;
+		}
+		if request != self.badge_editor.request || !self.badge_editor.saving {
+			return;
+		}
+		self.badge_editor.saving = false;
+		let settings = match result {
+			Ok(settings) => settings,
+			Err(failure) => {
+				self.badge_editor.error = Some(failure.label());
+				return;
+			}
+		};
+		self.badge_editor.error = None;
+		self.badge_editor.saved = self.badge_editor.saved.wrapping_add(1);
+		let Some(own) = self.user.as_ref().map(|user| user.id) else {
+			return;
+		};
+		let apply = |profile: &mut UserProfile| {
+			if profile.user.id == own
+				&& let Some(catalog) = profile.badge_catalog.as_deref_mut()
+			{
+				catalog.apply(&settings);
+			}
+		};
+		if let Some(data) = self.profile.as_mut().and_then(|view| view.data.as_mut()) {
+			apply(data);
+		}
+		if let Some(data) = self.own_profile.data.as_mut() {
+			apply(data);
+		}
+		self.profile_cache.update(own, apply);
+	}
+
 	pub fn can_save_own_profile(&self) -> bool {
 		(self.demo || (self.auth == AuthState::Authenticated && self.gateway_connected))
 			&& !self.own_profile.loading
@@ -484,6 +567,7 @@ mod tests {
 			frame_sku: None,
 			effect: None,
 			frame: None,
+			badge_catalog: None,
 			limited: false,
 		})
 	}
@@ -812,6 +896,7 @@ mod tests {
 					frame_sku: None,
 					effect: None,
 					frame: None,
+					badge_catalog: None,
 					limited: false,
 				})
 			}
@@ -999,6 +1084,7 @@ mod tests {
 					frame_sku: None,
 					effect: None,
 					frame: None,
+					badge_catalog: None,
 					limited: false,
 				})
 			};

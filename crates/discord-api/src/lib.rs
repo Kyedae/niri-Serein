@@ -1,6 +1,7 @@
 // Origin-fixed REST adapter. No cookies, redirects, logging, persistence or bot SDK.
 mod activity_sharing;
 mod archives;
+mod badges;
 mod channel_actions;
 mod collectibles;
 pub mod detectable;
@@ -1154,7 +1155,7 @@ impl DiscordApi {
 					// or a shared service cooldown. Dropping these reads is safe: they never write.
 					let effect = profile.effect_sku.filter(|_| cosmetics.effects);
 					let frame = profile.frame_sku.filter(|_| cosmetics.frames);
-					let (board, catalog) = tokio::join!(
+					let (board, catalog, badges) = tokio::join!(
 						tokio::time::timeout(
 							Duration::from_secs(2),
 							self.load_profile_board_games(&mut profile),
@@ -1163,9 +1164,16 @@ impl DiscordApi {
 							Duration::from_secs(2),
 							self.load_profile_collectibles(effect, frame),
 						),
+						tokio::time::timeout(Duration::from_secs(2), self.load_badge_catalog(user)),
 					);
 					if let Ok(result) = board {
 						result?;
+					}
+					if let Ok(result) = badges {
+						profile.badge_catalog = result?.map(Box::new);
+						if !profile.valid() {
+							profile.badge_catalog = None;
+						}
 					}
 					if let Ok(result) = catalog {
 						let (effect, frame) = result?;
@@ -1187,6 +1195,10 @@ impl DiscordApi {
 					result,
 				}
 			}
+			Command::BadgeSettings { request, settings } => Event::BadgeSettings {
+				request,
+				result: self.save_badge_settings(settings).await,
+			},
 			Command::StreamPreview {
 				guild,
 				channel,
@@ -2810,6 +2822,25 @@ mod tests {
 				.unwrap();
 			server_release.notified().await;
 			profile.write_all(body.as_bytes()).await.unwrap();
+			// The optional badge catalog follows the profile body.
+			let (mut catalog, _) = listener.accept().await.unwrap();
+			let n = catalog.read(&mut buffer).await.unwrap();
+			assert!(
+				std::str::from_utf8(&buffer[..n])
+					.unwrap()
+					.starts_with("GET /users/5/badges HTTP/1.1")
+			);
+			let badges = r#"{"badges":[{"badge_id":18,"name":"Account Age","owned":true}]}"#;
+			catalog
+				.write_all(
+					format!(
+						"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{badges}",
+						badges.len()
+					)
+					.as_bytes(),
+				)
+				.await
+				.unwrap();
 			for response in [
 				format!(
 					"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -2857,15 +2888,22 @@ mod tests {
 		.unwrap();
 		assert!(matches!(sent, Event::SendResult { result: Ok(_), .. }));
 		release.notify_one();
-		assert!(matches!(
-			pending.await.unwrap(),
-			Event::Profile {
-				user: model::Id(5),
-				guild: Some(model::Id(2)),
-				request: 9,
-				result: Ok(_)
-			}
-		));
+		let Event::Profile {
+			user: model::Id(5),
+			guild: Some(model::Id(2)),
+			request: 9,
+			result: Ok(profile),
+		} = pending.await.unwrap()
+		else {
+			panic!("profile expected");
+		};
+		assert_eq!(
+			profile
+				.badge_catalog
+				.as_ref()
+				.map(|catalog| catalog.badges.len()),
+			Some(1)
+		);
 		assert!(matches!(
 			api.execute(Command::Profile {
 				user: model::Id(5),
