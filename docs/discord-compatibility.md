@@ -23,7 +23,14 @@ to normal accounts is unverified.
   - `obtained_at` and `tier_obtained_at`
 
   Serein reads it beside every opened profile, as the official client does for badge
-  art. The read is optional, bounded to 256 KiB and shares the profile's two-second
+  art. The account's own catalog uses `/users/@me/badges`, as the clients do.
+  On October 12, a live owner test returned `404 Not Found` (`code` 0) for both
+  routes while Serein identified as web build 328,246. Unauthenticated requests to the
+  same routes return 401, so the routes exist. After the shared client fingerprint was
+  updated to the current web build, 634,304 (from the public `discord.com/app`
+  `GLOBAL_ENV`), the catalog loaded with 22 entries. This suggests a minimum-build gate;
+  Discord does not document one. Catalog PNG art can be large and is decoded within a
+  4 MiB / 4096 px budget, then scaled to 256 px. The read is optional, bounded to 256 KiB and shares the profile's two-second
   enrichment deadline. Failures leave the profile's own badge list. The retained catalog
   is capped at 40 badges and 48 KiB. Locked-badge tiers, then tier art, then whole
   badges are dropped first. SVG icons are skipped in favor of raster art.
@@ -31,8 +38,8 @@ to normal accounts is unverified.
   client's table (for example `premium_tenure_12_month_v2` → 1, `account_age` → 18).
   Owned, visible catalog badges missing from the profile response are added with catalog
   art. Badges the catalog marks hidden are removed, and the row follows the catalog order.
-  This also covers profile responses that omit the new badges, as observed for one
-  account's own profile. That account's response itself was not inspected.
+  This also covers profile responses that omit the new badges, as observed for the
+  owner's own profile.
   Non-hash `/badge-icons/` names (slugs up to 64 characters) are now accepted.
   Hovering a badge shows its art, name, tier and `info_label`.
 - **Directory.** It shows owned badges, the account's earnable badges, art, date unlocked,

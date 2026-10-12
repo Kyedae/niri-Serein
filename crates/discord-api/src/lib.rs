@@ -1164,7 +1164,11 @@ impl DiscordApi {
 							Duration::from_secs(2),
 							self.load_profile_collectibles(effect, frame),
 						),
-						tokio::time::timeout(Duration::from_secs(2), self.load_badge_catalog(user)),
+						// Only the account's own profile is requested without mutuals.
+						tokio::time::timeout(
+							Duration::from_secs(2),
+							self.load_badge_catalog(user, !with_mutuals)
+						),
 					);
 					if let Ok(result) = board {
 						result?;

@@ -13,11 +13,12 @@ impl DiscordApi {
 	pub(super) async fn load_badge_catalog(
 		&self,
 		user: Id,
+		own: bool,
 	) -> Result<Option<BadgeCatalog>, Failure> {
 		match self
 			.request_limited(
 				Method::GET,
-				&format!("/users/{user}/badges"),
+				&catalog_path(user, own),
 				None,
 				badges::MAX_CATALOG_WIRE,
 			)
@@ -43,5 +44,25 @@ impl DiscordApi {
 		)
 		.await?;
 		Ok(settings)
+	}
+}
+
+/// The official client reads the account's own catalog through `@me`.
+fn catalog_path(user: Id, own: bool) -> String {
+	if own {
+		"/users/@me/badges".into()
+	} else {
+		format!("/users/{user}/badges")
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn own_catalog_uses_the_current_user_route() {
+		assert_eq!(catalog_path(Id(5), true), "/users/@me/badges");
+		assert_eq!(catalog_path(Id(5), false), "/users/5/badges");
 	}
 }

@@ -57,6 +57,8 @@ fn is_animated_key(key: &str) -> bool {
 fn encoded_limit(key: &str) -> usize {
 	if let Some(cosmetic) = Cosmetic::parse(key) {
 		cosmetic.budget().encoded
+	} else if key.starts_with("badge-art:") {
+		badge_art_budget().encoded
 	} else if let Some(rendition) = Rendition::parse(key) {
 		media_encoded(&rendition)
 	} else if is_animated_key(key) {
@@ -264,9 +266,23 @@ impl Cosmetic {
 	}
 }
 
+/// Badge catalog art is often a large PNG; it is decoded within bounds and scaled down.
+fn badge_art_budget() -> Budget {
+	Budget {
+		fit: 256,
+		encoded: 4 * 1024 * 1024,
+		canvas: 4096,
+		alloc: 64 * 1024 * 1024,
+		frames: None,
+	}
+}
+
 fn budget(key: &str) -> Budget {
 	if let Some(cosmetic) = Cosmetic::parse(key) {
 		return cosmetic.budget();
+	}
+	if key.starts_with("badge-art:") {
+		return badge_art_budget();
 	}
 	let Some(rendition) = Rendition::parse(key) else {
 		let edge = decode_edge(key);
@@ -3013,6 +3029,9 @@ mod tests {
 		assert!(!is_animated_key(&format!("effect-still-c-{hash}")));
 		assert!(!is_animated_key("frame-30-31"));
 		assert!(budget(&format!("effect-c-{hash}")).frames.is_some());
+		// Large catalog PNGs are decoded and scaled, not rejected by the icon canvas.
+		let art = budget("badge-art:https://cdn.discordapp.com/assets/content/a.png");
+		assert!(art.canvas >= 2048 && art.fit == 256 && art.frames.is_none());
 		assert_eq!(budget("frame-30-31").fit, ui::FRAME_EDGE);
 		// Folder names are hashed before they reach the disk cache.
 		assert!(
