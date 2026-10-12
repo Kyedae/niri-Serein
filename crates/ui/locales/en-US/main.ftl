@@ -4804,3 +4804,8 @@ composer-placeholder-direct = Message @{ $name }
 
 # Context: timeline_dm_intro
 timeline-dm-intro = This is the beginning of your direct message history with { $name }.
+
+# Context: timeline_channel_intro
+timeline-channel-intro-title = Welcome to #{ $channel }!
+# Context: timeline_channel_intro
+timeline-channel-intro-start = This is the start of the #{ $channel } channel.

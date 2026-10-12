@@ -662,31 +662,120 @@ fn starter_row(
 const INTRO: Id = Id(0);
 const INTRO_ESTIMATE: f32 = 236.0;
 
-/// The other person in the selected one-to-one conversation, once its whole history is
-/// loaded: the official client opens such a conversation with their introduction.
-fn intro_user(state: &State) -> Option<&model::User> {
+/// What leads a conversation once its whole history is loaded, as in the official client.
+#[derive(Clone)]
+enum Intro {
+	/// The other person in a one-to-one conversation.
+	Direct(model::User),
+	/// A server channel, thread or forum post with messages.
+	Channel { name: String, kind: u8, post: bool },
+}
+
+fn intro(state: &State, empty: bool) -> Option<Intro> {
 	let channel = state.selected.and_then(|id| state.channel(id))?;
-	(channel.kind == 1
-		&& state.freshness == model::Freshness::Fresh
+	let complete = state.freshness == model::Freshness::Fresh
 		&& !state.history_pending
 		&& !state.history_targeted
 		&& state.history_before.is_none()
 		&& state.history_after.is_none()
-		&& state.older_exhausted)
-		.then(|| channel.recipients.first())
-		.flatten()
+		&& state.older_exhausted;
+	if !complete {
+		return None;
+	}
+	let named = |post| Intro::Channel {
+		name: channel.name.clone(),
+		kind: channel.kind,
+		post,
+	};
+	match channel.kind {
+		1 => channel.recipients.first().cloned().map(Intro::Direct),
+		// An empty server channel keeps its full-height welcome instead.
+		0 | 5 if channel.guild.is_some() && !empty => Some(named(false)),
+		10..=12 if !empty => {
+			let post = channel
+				.parent_id
+				.and_then(|parent| state.channel(parent))
+				.is_some_and(|parent| matches!(parent.kind, 15 | 16));
+			Some(named(post))
+		}
+		_ => None,
+	}
 }
 
-/// Height key for the introduction: its layout depends on the person and what is known.
-fn intro_key(user: &model::User, state: &State) -> u64 {
+/// Height key for the introduction: its layout depends on what it names.
+fn intro_key(intro: &Intro, state: &State) -> u64 {
 	let mut hasher = DefaultHasher::new();
-	user.id.hash(&mut hasher);
-	user.name.hash(&mut hasher);
-	state
-		.known_profile(user.id)
-		.map(|profile| profile.mutual_guilds.len())
-		.hash(&mut hasher);
+	match intro {
+		Intro::Direct(user) => {
+			user.id.hash(&mut hasher);
+			user.name.hash(&mut hasher);
+			state
+				.known_profile(user.id)
+				.map(|profile| profile.mutual_guilds.len())
+				.hash(&mut hasher);
+		}
+		Intro::Channel { name, kind, post } => {
+			(name, kind, post).hash(&mut hasher);
+		}
+	}
 	hasher.finish()
+}
+
+/// "Welcome to #name!" for a server channel, or a thread's or forum post's title.
+fn channel_intro(ui: &mut egui::Ui, name: &str, kind: u8, post: bool, width: f32) {
+	let colors = crate::design::palette(ui);
+	egui::Frame::NONE
+		.inner_margin(egui::Margin {
+			left: 16,
+			right: 16,
+			top: 16,
+			bottom: 4,
+		})
+		.show(ui, |ui| {
+			ui.set_min_width((width - 32.0).max(1.0));
+			ui.spacing_mut().item_spacing.y = 8.0;
+			let (badge, _) = ui.allocate_exact_size(egui::Vec2::splat(68.0), egui::Sense::hover());
+			let icon = match kind {
+				5 => crate::icons::Icon::Megaphone,
+				10..=12 if post => crate::icons::Icon::Forum,
+				10..=12 => crate::icons::Icon::Thread,
+				_ => crate::icons::Icon::Hash,
+			};
+			if !post {
+				ui.painter()
+					.circle_filled(badge.center(), 34.0, colors.raised);
+			}
+			crate::icons::paint(
+				ui.painter(),
+				icon,
+				badge.shrink(if post { 8.0 } else { 16.0 }),
+				colors.text_strong,
+			);
+			let thread = matches!(kind, 10..=12);
+			let title = if thread {
+				name.to_owned()
+			} else {
+				crate::i18n::translate_args("timeline-channel-intro-title", &[("channel", name)])
+			};
+			ui.add(
+				egui::Label::new(
+					crate::design::semibold(ui, title, if thread { 30.0 } else { 32.0 })
+						.color(colors.text_strong),
+				)
+				.wrap()
+				.selectable(false),
+			);
+			if !thread {
+				ui.label(
+					RichText::new(crate::i18n::translate_args(
+						"timeline-channel-intro-start",
+						&[("channel", name)],
+					))
+					.size(15.0)
+					.color(colors.muted),
+				);
+			}
+		});
 }
 
 /// "This is the beginning of your direct message history" header, as in the official client.
@@ -2070,8 +2159,13 @@ impl TimelineView {
 				&& state.older_exhausted
 		});
 		let starter_id = starter.map(|m| m.id);
-		let intro = intro_user(state).cloned();
-		let intro_height_key = intro.as_ref().map(|user| intro_key(user, state));
+		let intro_empty = state.timeline.display_iter().next().is_none()
+			&& !state
+				.pending
+				.iter()
+				.any(|p| Some(p.channel) == state.selected);
+		let intro = intro(state, intro_empty);
+		let intro_height_key = intro.as_ref().map(|intro| intro_key(intro, state));
 		let mut layout_changed = false;
 		if self.revision != state.revision {
 			// Member/presence and other unrelated updates must not restore the scroll
@@ -2251,7 +2345,8 @@ impl TimelineView {
 				}
 			}
 			return;
-		} else if empty && history_available && !welcome && intro.is_none() {
+		} else if empty && history_available && !welcome && !matches!(intro, Some(Intro::Direct(_)))
+		{
 			ui.label(crate::i18n::translate_if_key(match state.freshness {
 				model::Freshness::Loading => "timeline-show-with-scroll-loading-messages",
 				model::Freshness::Unavailable => {
@@ -2536,15 +2631,20 @@ impl TimelineView {
 				end = index + 1;
 				let id = self.rows[index].0;
 				if id == INTRO
-					&& let Some(user) = intro.as_ref()
+					&& let Some(intro) = intro.as_ref()
 				{
 					let response = ui
-						.scope_builder(egui::UiBuilder::new().scope_id(row_id), |ui| {
-							intro_action = dm_intro(ui, user, state, avatars, profile, width)
-								.or(intro_action.take());
+						.scope_builder(egui::UiBuilder::new().scope_id(row_id), |ui| match intro {
+							Intro::Direct(user) => {
+								intro_action = dm_intro(ui, user, state, avatars, profile, width)
+									.or(intro_action.take());
+							}
+							Intro::Channel { name, kind, post } => {
+								channel_intro(ui, name, *kind, *post, width);
+							}
 						})
 						.response;
-					measurements.push((id, intro_key(user, state), response.rect.height()));
+					measurements.push((id, intro_key(intro, state), response.rect.height()));
 					continue;
 				}
 				if Some(id) == self.starter_row
@@ -6543,7 +6643,15 @@ mod tests {
 			}
 			output.drop_without_applying_deltas();
 		}
-		assert_eq!(view.rows.first().map(|(id, _)| *id), Some(thread));
+		// The thread's introduction leads, then its starter, then the replies.
+		assert_eq!(
+			view.rows
+				.iter()
+				.take(2)
+				.map(|(id, _)| *id)
+				.collect::<Vec<_>>(),
+			vec![INTRO, thread]
+		);
 		for label in [
 			"The message that started it all",
 			"Thread started from this message",
@@ -9188,7 +9296,7 @@ mod tests {
 				}
 				assert_eq!(
 					view.rows.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-					vec![Id(900)]
+					vec![INTRO, Id(900)]
 				);
 				assert!(matches!(
 					state.select(Id(20)),
