@@ -222,14 +222,23 @@ impl Avatars {
 			if self.animations.contains_key(&key) || self.no_animations.contains(&key) {
 				continue;
 			}
+			if self.effect_decoding.contains(&key) {
+				ready = false;
+				continue;
+			}
+			// Frames lost a second time cannot fit beside the other layers; play it still.
+			if self.effect_reloaded.contains(&key) {
+				continue;
+			}
 			ready = false;
 			// Frames released while idle, discarded when animation was toggled or evicted from
 			// the pool: decode them again, once.
-			if !self.effect_decoding.contains(&key) && self.effect_decoding.len() < 256 {
+			if self.effect_decoding.len() < 256 && self.effect_reloaded.len() < 256 {
 				self.request(key.clone());
 				// Only a queued request is pending; a full queue retries next frame.
 				if self.attempts.contains_key(&key) {
-					self.effect_decoding.insert(key);
+					self.effect_decoding.insert(key.clone());
+					self.effect_reloaded.insert(key);
 				}
 			}
 		}
@@ -772,8 +781,19 @@ mod tests {
 			key.clone(),
 			Some(ColorImage::filled([4, 4], Color32::WHITE)),
 		);
-		avatars.accept_animation(key, frames());
+		avatars.accept_animation(key.clone(), frames());
 		assert!(ready(&mut avatars));
+		// Evicted again (the effect exceeds the animation pool): play it as a still, no loop.
+		avatars.animations.remove(&key);
+		assert!(ready(&mut avatars));
+		assert!(avatars.take_requests().is_empty());
+		// A failed reload clears its pending mark so a later readiness pass can retry.
+		avatars.set_animation(false);
+		avatars.set_animation(true);
+		assert!(!ready(&mut avatars));
+		assert_eq!(avatars.take_requests(), std::slice::from_ref(&key));
+		avatars.accept(&ctx, key.clone(), None);
+		assert!(!avatars.effect_decoding.contains(&key));
 	}
 
 	#[test]

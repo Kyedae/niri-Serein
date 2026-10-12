@@ -67,6 +67,9 @@ pub(crate) struct Avatars {
 	/// Profile effect layers with a decode in flight, so readiness neither repeats the request
 	/// nor waits on frames that were discarded without one.
 	effect_decoding: HashSet<String>,
+	/// Effect layers already decoded again once; losing their frames again (an effect larger
+	/// than the animation pool) shows them as stills instead of decoding in a loop.
+	effect_reloaded: HashSet<String>,
 	textures: HashMap<String, (Instant, TextureHandle)>,
 	emoji_textures: HashMap<String, (Instant, TextureHandle)>,
 	emoji_bytes: usize,
@@ -215,6 +218,8 @@ impl Avatars {
 		self.no_animations.clear();
 		self.released.clear();
 		self.wanted.clear();
+		self.effect_decoding.clear();
+		self.effect_reloaded.clear();
 		self.media.set_animation(enabled);
 		if !enabled {
 			self.animations.clear();
@@ -417,6 +422,8 @@ impl Avatars {
 				&& image.size[1] <= limit
 				&& image.pixels.len() == image.size[0] * image.size[1]
 		}) else {
+			// A failed or rejected load ends any decode an effect layer was waiting for.
+			self.effect_decoding.remove(&key);
 			if let Some(attempt) = self.attempts.get_mut(&key) {
 				*attempt = (Instant::now(), true);
 			}
