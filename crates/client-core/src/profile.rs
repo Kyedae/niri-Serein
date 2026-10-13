@@ -51,6 +51,17 @@ impl ProfileCache {
 			.map(|entry| size_of::<CachedProfile>() + entry.data.bytes())
 			.sum()
 	}
+	/// A cached, unexpired global profile, without refreshing or evicting anything.
+	fn peek(&self, user: Id, now: Instant) -> Option<&UserProfile> {
+		self.entries
+			.iter()
+			.find(|entry| {
+				entry.user == user
+					&& entry.guild.is_none()
+					&& now.saturating_duration_since(entry.fetched) < CACHE_TTL
+			})
+			.map(|entry| &entry.data)
+	}
 	/// Updates every cached view of `user` in place.
 	pub(crate) fn update(&mut self, user: Id, change: impl Fn(&mut UserProfile)) {
 		for entry in self.entries.iter_mut().filter(|entry| entry.user == user) {
@@ -102,6 +113,14 @@ pub struct BadgeEditor {
 }
 
 impl State {
+	/// An already loaded global profile for `user`: the open view or the recent cache.
+	pub fn known_profile(&self, user: Id) -> Option<&UserProfile> {
+		self.profile
+			.as_ref()
+			.filter(|view| view.user == user && view.guild.is_none())
+			.and_then(|view| view.data.as_ref())
+			.or_else(|| self.profile_cache.peek(user, Instant::now()))
+	}
 	/// Saves the account's badge order and hidden set. Demo sessions confirm locally.
 	pub fn save_badge_settings(
 		&mut self,

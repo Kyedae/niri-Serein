@@ -80,6 +80,7 @@ fn media_encoded(rendition: &Rendition) -> usize {
 	};
 	match rendition.motion {
 		Motion::Animated => MAX_ANIMATED_ENCODED,
+		Motion::Still if ui::is_motion_video(rendition.source.as_str()) => MAX_ANIMATED_ENCODED,
 		Motion::Still => {
 			(width as usize * height as usize * 3).clamp(MAX_ENCODED, MAX_MEDIA_ENCODED)
 		}
@@ -836,6 +837,11 @@ fn media_urls(rendition: &Rendition) -> Option<MediaUrls> {
 		{
 			(proxy_base(source).map(String::from), None)
 		}
+		// Provider media cannot go through Discord's proxy; a clip's still is its first frame.
+		Motion::Still if proxy_base(source).is_none() => (
+			motion_video_source(source).or(provider.then(|| source.to_owned())),
+			None,
+		),
 		Motion::Still => (
 			proxy_url(source, size, ProxyFormat::LosslessWebp),
 			proxy_base(source).and_then(|mut original| {
@@ -1317,7 +1323,8 @@ async fn run(
 				if *cancelled.borrow() { break; }
 				if Rendition::parse(&key).is_some_and(|rendition| rendition.lane == Lane::Viewer) {
 					viewer.push_back(key);
-				} else if partition(&key) == model::CachePartition::Artwork {
+				} else if partition(&key) == model::CachePartition::Artwork && !is_animated_key(&key) {
+					// Animated decorations decode every frame; they must not delay server icons.
 					artwork.push_back(key);
 				} else {
 					inline.push_back(key);
@@ -1489,9 +1496,11 @@ async fn load(job: Job) -> Loaded {
 	let mut early = animated.then_some(early);
 	let mut stale = None;
 	if let Some(bytes) = cached {
+		let clip = is_isobmff(&bytes);
 		let (image, frames, _) = decode_blocking(&key, bytes, false, budget, early.clone()).await;
 		// A single stored frame is fetched again: a static rendition may share its cache name.
-		if image.is_some() && (!animated || frames.len() >= 2) {
+		// A cached clip is already the full source; fetching it again cannot improve decoding.
+		if image.is_some() && (!animated || frames.len() >= 2 || clip) {
 			return Loaded {
 				key,
 				fetched: None,
@@ -1574,7 +1583,12 @@ async fn decode_blocking(
 		let Some(frame_budget) = budget.frames else {
 			return (decode(&bytes, &budget), Vec::new(), Some(bytes));
 		};
+		let preview = std::sync::Mutex::new(None);
 		let post = |image: &egui::ColorImage| {
+			// Keep the opening frame if decoding the rest fails, without opening the clip again.
+			if is_isobmff(&bytes) {
+				*preview.lock().expect("preview decode owns its mutex") = Some(image.clone());
+			}
 			if let Some(results) = &early {
 				results.preview(AvatarResult {
 					key: key.clone(),
@@ -1586,11 +1600,27 @@ async fn decode_blocking(
 				});
 			}
 		};
-		let frames = decode_animation(&bytes, &frame_budget, post).unwrap_or_default();
+		let mut frames = decode_animation(&bytes, &frame_budget, post).unwrap_or_default();
+		// A profile effect layer that plays its file once keeps the last frame for the rest of
+		// its duration, as browsers do, instead of jumping back to the first frame.
+		if Cosmetic::parse(&key) == Some(Cosmetic::Effect)
+			&& apng_plays(&bytes).is_some_and(|plays| plays > 0)
+			&& let Some((delay, _)) = frames.last_mut()
+		{
+			*delay = Duration::from_secs(60 * 60);
+		}
 		let image = frames
 			.first()
 			.map(|(_, image)| image.as_ref().clone())
-			.or_else(|| decode(&bytes, &budget));
+			.or_else(|| preview.into_inner().ok().flatten())
+			.or_else(|| {
+				// A failed clip already tried to produce its first frame within the decode deadline.
+				if is_isobmff(&bytes) {
+					None
+				} else {
+					decode(&bytes, &budget)
+				}
+			});
 		(image, frames, Some(bytes))
 	})
 	.await
@@ -1697,6 +1727,15 @@ fn decode(bytes: &[u8], budget: &Budget) -> Option<egui::ColorImage> {
 			image.as_raw(),
 		));
 	}
+	if is_isobmff(bytes) {
+		return std::thread::scope(|scope| {
+			scope
+				.spawn(|| first_video_frame(bytes, budget.fit))
+				.join()
+				.ok()
+				.flatten()
+		});
+	}
 	// Provider previews can be GIF/JPEG/WebP; decode only the first frame, within limits.
 	let mut reader = image::ImageReader::new(Cursor::new(bytes))
 		.with_guessed_format()
@@ -1755,7 +1794,56 @@ fn resize_to(image: image::RgbaImage, fit: u32) -> image::RgbaImage {
 	} else {
 		image::imageops::FilterType::Lanczos3
 	};
-	image::imageops::resize(&image, width, height, filter)
+	// The generic `imageops::resize` would be instantiated in this unoptimized dev crate, about
+	// 30 times slower per animation frame; the `DynamicImage` method runs the same filter
+	// compiled in the optimized `image` crate.
+	image::DynamicImage::ImageRgba8(image)
+		.resize_exact(width, height, filter)
+		.into_rgba8()
+}
+
+/// The opening picture of a clip: the still for provider video Discord cannot proxy, and for a
+/// clip too long to decode whole.
+fn first_video_frame(bytes: &[u8], fit: u32) -> Option<egui::ColorImage> {
+	let started = Instant::now();
+	let bytes: Arc<[u8]> = bytes.into();
+	let mut decoder = open_preview_decoder(bytes, started)?;
+	while started.elapsed() < Duration::from_secs(3) {
+		match decoder.poll_video() {
+			Ok(std::task::Poll::Pending) => {
+				let _ = decoder.poll_audio();
+				std::thread::sleep(Duration::from_millis(2));
+			}
+			Ok(std::task::Poll::Ready(Some(platform::video::Sample::Video {
+				picture, ..
+			}))) => {
+				let (width, height, rgba) = picture.to_rgba()?;
+				let pixels = (width as usize).checked_mul(height as usize)?;
+				if width == 0 || height == 0 || rgba.len() != pixels.checked_mul(4)? {
+					return None;
+				}
+				let image = resize_to(image::RgbaImage::from_raw(width, height, rgba)?, fit);
+				return Some(egui::ColorImage::from_rgba_unmultiplied(
+					[image.width() as usize, image.height() as usize],
+					image.as_raw(),
+				));
+			}
+			Ok(std::task::Poll::Ready(Some(_))) => {}
+			Ok(std::task::Poll::Ready(None)) | Err(_) => return None,
+		}
+	}
+	None
+}
+
+fn open_preview_decoder(bytes: Arc<[u8]>, started: Instant) -> Option<platform::video::Decoder> {
+	let source = Box::new(Cursor::new(bytes));
+	#[cfg(target_os = "linux")]
+	let decoder = platform::video::Decoder::open_until(source, started + Duration::from_secs(3));
+	#[cfg(not(target_os = "linux"))]
+	let decoder = platform::video::Decoder::open(source);
+	decoder
+		.ok()
+		.filter(|_| started.elapsed() < Duration::from_secs(3))
 }
 
 fn decode_motion_video(
@@ -1770,8 +1858,7 @@ fn decode_motion_video(
 	// One owned copy for the decoder's 'static stream, shared by every shrink pass.
 	let bytes: Arc<[u8]> = bytes.into();
 	'decode: loop {
-		let mut decoder =
-			platform::video::Decoder::open(Box::new(Cursor::new(bytes.clone()))).ok()?;
+		let mut decoder = open_preview_decoder(bytes.clone(), started)?;
 		let duration = decoder.info().duration;
 		let mut frames: Vec<(f64, Arc<egui::ColorImage>)> = Vec::new();
 		let mut total = 0usize;
@@ -1946,6 +2033,23 @@ fn decode_animation(
 		}
 		return Some(frames);
 	}
+}
+
+/// The APNG play count from `acTL`, where 0 means forever; `None` for other images.
+fn apng_plays(bytes: &[u8]) -> Option<u32> {
+	let mut chunks = bytes.strip_prefix(b"\x89PNG\r\n\x1a\n")?;
+	while let [a, b, c, d, kind @ ..] = chunks
+		&& kind.len() >= 8
+	{
+		let length = u32::from_be_bytes([*a, *b, *c, *d]) as usize;
+		let (name, data) = kind.split_at(4);
+		match name {
+			b"acTL" => return Some(u32::from_be_bytes(data.get(4..8)?.try_into().ok()?)),
+			b"IDAT" => return None,
+			_ => chunks = data.get(length.checked_add(4)?..)?,
+		}
+	}
+	None
 }
 
 fn animation_frames(bytes: &[u8]) -> Option<image::Frames<'_>> {
@@ -3570,4 +3674,22 @@ pub(crate) fn debug_profile_resolution_check() {
 	println!(
 		"Profile avatar/banner renditions request source resolution; attachment signatures preserved."
 	);
+}
+
+#[test]
+fn provider_clip_stills_fetch_the_clip_and_unknown_hosts_stay_unfetched() {
+	let still = |source: &str| {
+		media_urls(&Rendition::parse(&format!("media:is:320x240:{source}")).unwrap())
+			.map(|urls| (urls.primary, urls.fallback))
+	};
+	for source in [
+		"https://static.klipy.com/ii/synthetic/a1.mp4",
+		"https://media.tenor.com/synthetic/clip.mp4",
+		"https://static.klipy.com/ii/synthetic/a1.webp",
+	] {
+		assert_eq!(still(source), Some((source.to_owned(), None)));
+	}
+	assert!(still("https://example.com/clip.mp4").is_none());
+	assert!(is_isobmff(b"\0\0\0\x18ftypmp42"));
+	assert!(decode(b"\0\0\0\x18ftypmp42 not a clip", &budget("gif:x")).is_none());
 }
