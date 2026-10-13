@@ -78,6 +78,7 @@ fn media_encoded(rendition: &Rendition) -> usize {
 	};
 	match rendition.motion {
 		Motion::Animated => MAX_ANIMATED_ENCODED,
+		Motion::Still if ui::is_motion_video(rendition.source.as_str()) => MAX_ANIMATED_ENCODED,
 		Motion::Still => {
 			(width as usize * height as usize * 3).clamp(MAX_ENCODED, MAX_MEDIA_ENCODED)
 		}
@@ -1472,9 +1473,11 @@ async fn load(job: Job) -> Loaded {
 	let mut early = animated.then_some(early);
 	let mut stale = None;
 	if let Some(bytes) = cached {
+		let clip = is_isobmff(&bytes);
 		let (image, frames, _) = decode_blocking(&key, bytes, false, budget, early.clone()).await;
 		// A single stored frame is fetched again: a static rendition may share its cache name.
-		if image.is_some() && (!animated || frames.len() >= 2) {
+		// A cached clip is already the full source; fetching it again cannot improve decoding.
+		if image.is_some() && (!animated || frames.len() >= 2 || clip) {
 			return Loaded {
 				key,
 				fetched: None,
@@ -1557,7 +1560,12 @@ async fn decode_blocking(
 		let Some(frame_budget) = budget.frames else {
 			return (decode(&bytes, &budget), Vec::new(), Some(bytes));
 		};
+		let preview = std::sync::Mutex::new(None);
 		let post = |image: &egui::ColorImage| {
+			// Keep the opening frame if decoding the rest fails, without opening the clip again.
+			if is_isobmff(&bytes) {
+				*preview.lock().expect("preview decode owns its mutex") = Some(image.clone());
+			}
 			if let Some(results) = &early {
 				results.preview(AvatarResult {
 					key: key.clone(),
@@ -1581,7 +1589,15 @@ async fn decode_blocking(
 		let image = frames
 			.first()
 			.map(|(_, image)| image.as_ref().clone())
-			.or_else(|| decode(&bytes, &budget));
+			.or_else(|| preview.into_inner().ok().flatten())
+			.or_else(|| {
+				// A failed clip already tried to produce its first frame within the decode deadline.
+				if is_isobmff(&bytes) {
+					None
+				} else {
+					decode(&bytes, &budget)
+				}
+			});
 		(image, frames, Some(bytes))
 	})
 	.await
@@ -1768,7 +1784,7 @@ fn resize_to(image: image::RgbaImage, fit: u32) -> image::RgbaImage {
 fn first_video_frame(bytes: &[u8], fit: u32) -> Option<egui::ColorImage> {
 	let started = Instant::now();
 	let bytes: Arc<[u8]> = bytes.into();
-	let mut decoder = platform::video::Decoder::open(Box::new(Cursor::new(bytes))).ok()?;
+	let mut decoder = open_preview_decoder(bytes, started)?;
 	while started.elapsed() < Duration::from_secs(3) {
 		match decoder.poll_video() {
 			Ok(std::task::Poll::Pending) => {
@@ -1796,6 +1812,17 @@ fn first_video_frame(bytes: &[u8], fit: u32) -> Option<egui::ColorImage> {
 	None
 }
 
+fn open_preview_decoder(bytes: Arc<[u8]>, started: Instant) -> Option<platform::video::Decoder> {
+	let source = Box::new(Cursor::new(bytes));
+	#[cfg(target_os = "linux")]
+	let decoder = platform::video::Decoder::open_until(source, started + Duration::from_secs(3));
+	#[cfg(not(target_os = "linux"))]
+	let decoder = platform::video::Decoder::open(source);
+	decoder
+		.ok()
+		.filter(|_| started.elapsed() < Duration::from_secs(3))
+}
+
 fn decode_motion_video(
 	bytes: &[u8],
 	budget: &FrameBudget,
@@ -1808,8 +1835,7 @@ fn decode_motion_video(
 	// One owned copy for the decoder's 'static stream, shared by every shrink pass.
 	let bytes: Arc<[u8]> = bytes.into();
 	'decode: loop {
-		let mut decoder =
-			platform::video::Decoder::open(Box::new(Cursor::new(bytes.clone()))).ok()?;
+		let mut decoder = open_preview_decoder(bytes.clone(), started)?;
 		let duration = decoder.info().duration;
 		let mut frames: Vec<(f64, Arc<egui::ColorImage>)> = Vec::new();
 		let mut total = 0usize;

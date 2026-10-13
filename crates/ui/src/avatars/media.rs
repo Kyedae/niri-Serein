@@ -278,6 +278,7 @@ enum Learned {
 enum Attempt {
 	Pending,
 	Failed(Instant),
+	Rejected,
 }
 
 enum Pixels {
@@ -443,6 +444,7 @@ fn choose(slot: &Slot, motion: Motion, size: Size, now: Instant) -> Choice {
 		.map(|(index, _)| index);
 	let (failed, request) = match slot.attempt(motion, size) {
 		Some(Attempt::Pending) => (false, false),
+		Some(Attempt::Rejected) => (true, false),
 		Some(Attempt::Failed(at)) if now.saturating_duration_since(at) < RETRY => (true, false),
 		_ => (false, true),
 	};
@@ -506,17 +508,23 @@ impl MediaLibrary {
 		now: Instant,
 	) -> (Rendition, Choice) {
 		let slot = self.slot(source);
-		// An animation that failed to load (too large, or a decoder limit) leaves the still,
-		// which Discord's proxy renders for any GIF, instead of retrying into a blank tile.
-		let animation_failed = slot.attempts.iter().any(|(motion, _, attempt)| {
-			*motion == Motion::Animated && matches!(attempt, Attempt::Failed(_))
-		});
+		// Temporary failures show a still during backoff, then retry this rendition.
+		let animation_failed = matches!(
+			slot.attempt(Motion::Animated, size),
+			Some(Attempt::Failed(at)) if now.saturating_duration_since(at) < RETRY
+		);
 		let motion = if may_animate && slot.learned == Learned::Unknown && !animation_failed {
 			Motion::Animated
 		} else {
 			Motion::Still
 		};
-		let choice = choose(slot, motion, size, now);
+		let mut choice = choose(slot, motion, size, now);
+		if motion == Motion::Animated && choice.base.is_none() {
+			choice.base = choose(slot, Motion::Still, size, now).base;
+			if choice.base.is_some() {
+				choice.quality = Quality::Upgrading;
+			}
+		}
 		(
 			Rendition {
 				source: source.clone(),
@@ -557,6 +565,8 @@ impl MediaLibrary {
 	pub(super) fn set_animation(&mut self, enabled: bool) {
 		for slot in self.slots.values_mut() {
 			slot.learned = Learned::Unknown;
+			slot.attempts
+				.retain(|(.., attempt)| !matches!(attempt, Attempt::Rejected));
 			if !enabled {
 				slot.held.retain(|held| held.motion == Motion::Still);
 				slot.attempts
@@ -595,6 +605,9 @@ impl MediaLibrary {
 				// Retrying cannot help a clip this decoder rejects, and it is not cached on disk.
 				slot.learned = Learned::Unplayable;
 				slot.forget(motion, size);
+			} else if is_motion_video(source.as_str()) {
+				// A rejected clip still must not download and start a decoder on every backoff.
+				slot.record(motion, size, Attempt::Rejected);
 			} else {
 				slot.record(motion, size, Attempt::Failed(Instant::now()));
 			}
@@ -1063,6 +1076,14 @@ impl Avatars {
 		rect: egui::Rect,
 		demo: bool,
 	) -> bool {
+		if model::valid_discord_media_url(&gif.preview)
+			&& let Ok(url) = url::Url::parse(&gif.preview)
+			&& url.path().starts_with("/attachments/")
+			&& !url.query_pairs().any(|(key, _)| key == "hm")
+		{
+			// Synced attachment favorites lost their signature; requests cannot refresh it.
+			return false;
+		}
 		// Synced favorites without dimensions carry a 1×1 layout placeholder, not a size.
 		let native = (gif.width > 1 || gif.height > 1).then_some([gif.width, gif.height]);
 		let [width, height] = native.unwrap_or_default();
