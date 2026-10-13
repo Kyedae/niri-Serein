@@ -671,15 +671,19 @@ enum Intro {
 	Channel { name: String, kind: u8, post: bool },
 }
 
-fn intro(state: &State, empty: bool) -> Option<Intro> {
-	let channel = state.selected.and_then(|id| state.channel(id))?;
-	let complete = state.freshness == model::Freshness::Fresh
+/// The loaded window reaches the first message. Finished older pages keep
+/// `history_before` set, so it does not disqualify the window.
+fn history_complete(state: &State) -> bool {
+	state.freshness == model::Freshness::Fresh
 		&& !state.history_pending
 		&& !state.history_targeted
-		&& state.history_before.is_none()
 		&& state.history_after.is_none()
-		&& state.older_exhausted;
-	if !complete {
+		&& state.older_exhausted
+}
+
+fn intro(state: &State, empty: bool) -> Option<Intro> {
+	let channel = state.selected.and_then(|id| state.channel(id))?;
+	if !history_complete(state) {
 		return None;
 	}
 	let named = |post| Intro::Channel {
@@ -2150,14 +2154,7 @@ impl TimelineView {
 		self.applied_hide_media_links = self.hide_media_links;
 		self.applied_compact_messages = self.compact_messages;
 		// A thread's starter joins the rows only once the whole thread history is loaded.
-		let starter = state.thread_starter().filter(|_| {
-			state.freshness == model::Freshness::Fresh
-				&& !state.history_pending
-				&& !state.history_targeted
-				&& state.history_before.is_none()
-				&& state.history_after.is_none()
-				&& state.older_exhausted
-		});
+		let starter = state.thread_starter().filter(|_| history_complete(state));
 		let starter_id = starter.map(|m| m.id);
 		let intro_empty = state.timeline.display_iter().next().is_none()
 			&& !state
@@ -4254,10 +4251,16 @@ impl TimelineView {
 			(output.state.clamped_offset().y - lead).max(0.0),
 			(output.state.clamped_offset().y + output.inner_rect.height() - lead).max(0.0),
 		);
-		self.anchor = self
-			.rows
-			.get(anchor)
-			.map(|(id, _)| (*id, output.state.clamped_offset().y - lead - anchor_top));
+		let inset = output.state.clamped_offset().y - lead - anchor_top;
+		// The introduction is not a message, so a saved reading cursor could not
+		// restore it; anchor on the first message with the introduction as negative inset.
+		self.anchor = match self.rows.get(anchor) {
+			Some(&(INTRO, height)) => self
+				.rows
+				.get(anchor + 1)
+				.map(|(id, _)| (*id, inset - height)),
+			row => row.map(|(id, _)| (*id, inset)),
+		};
 		if selected_reply.is_some() {
 			state.reply = selected_reply.map(client_core::Reply::to);
 			self.reply_started = true;
@@ -6558,6 +6561,83 @@ mod tests {
 			render(&mut view, &mut state, vec![]);
 			assert!(view.revealed.is_empty());
 		}
+	}
+	#[test]
+	fn the_introduction_leads_once_the_final_older_page_is_loaded() {
+		let ctx = egui::Context::default();
+		let mut state = test_support::demo_state();
+		state.gateway_connected = true;
+		state.auth = client_core::auth::AuthState::Authenticated;
+		let channel = Id(21);
+		let page = |state: &mut State, request, older, ids: std::ops::Range<u64>| {
+			let messages = ids
+				.rev()
+				.map(|id| {
+					let mut message = test_support::message(id, channel);
+					message.attachments.clear();
+					message.embeds.clear();
+					message
+				})
+				.collect();
+			state.apply(client_core::Envelope {
+				generation: state.generation,
+				event: client_core::Event::History {
+					channel,
+					request,
+					older,
+					messages,
+				},
+			});
+		};
+		let Some(client_core::Command::History { request, .. }) = state.select(channel) else {
+			panic!("channel history requested");
+		};
+		page(&mut state, request, false, 1_000_100..1_000_150);
+		let mut view = TimelineView::default();
+		let show = |view: &mut TimelineView, state: &mut State| {
+			for _ in 0..3 {
+				ctx.run_ui(
+					egui::RawInput {
+						screen_rect: Some(egui::Rect::from_min_size(
+							egui::Pos2::ZERO,
+							egui::vec2(900.0, 600.0),
+						)),
+						..Default::default()
+					},
+					|ui| {
+						view.show(
+							ui,
+							state,
+							&mut None,
+							&mut None,
+							(
+								&mut crate::avatars::Avatars::default(),
+								&mut crate::profiles::ProfileSession::default(),
+							),
+							None,
+						);
+					},
+				)
+				.drop_without_applying_deltas();
+			}
+		};
+		show(&mut view, &mut state);
+		assert_ne!(view.rows.first().map(|(id, _)| *id), Some(INTRO));
+		let Some(client_core::Command::History { request, .. }) = state.older_history() else {
+			panic!("older history requested");
+		};
+		page(&mut state, request, true, 1_000_000..1_000_003);
+		// A finished older page leaves `history_before` set; the window is still complete.
+		assert!(state.older_exhausted && state.history_before.is_some());
+		show(&mut view, &mut state);
+		assert_eq!(
+			view.rows
+				.iter()
+				.take(2)
+				.map(|(id, _)| *id)
+				.collect::<Vec<_>>(),
+			vec![INTRO, Id(1_000_000)]
+		);
 	}
 	#[test]
 	fn thread_starter_renders_above_replies_once_history_is_exhausted() {
