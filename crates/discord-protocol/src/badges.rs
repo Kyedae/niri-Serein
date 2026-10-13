@@ -10,6 +10,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 pub const MAX_CATALOG_WIRE: usize = 256 * 1024;
+/// Tiers read per badge before the retained window is chosen.
+const MAX_WIRE_TIERS: usize = 64;
 
 #[derive(Deserialize)]
 struct CatalogDto {
@@ -160,7 +162,7 @@ fn badge(dto: BadgeDto) -> Option<CatalogBadge> {
 	};
 	let mut tier_dates = tier_dates;
 	let mut tiers: Vec<BadgeTier> = values(dto.tiers)
-		.take(MAX_BADGE_TIERS)
+		.take(MAX_WIRE_TIERS)
 		.filter(|tier| !tier.key.is_empty() && tier.key.len() <= 64)
 		.map(|tier| {
 			let (icon, art) = tier.art.split();
@@ -179,12 +181,25 @@ fn badge(dto: BadgeDto) -> Option<CatalogBadge> {
 			}
 		})
 		.collect();
-	tiers.shrink_to_fit();
 	let tier_key = |value: Option<Lenient<String>>| {
 		lenient_text(value).filter(|key| tiers.iter().any(|tier| tier.key == *key))
 	};
 	let current_tier = tier_key(dto.current_tier);
 	let next_tier = tier_key(dto.next_tier);
+	if tiers.len() > MAX_BADGE_TIERS {
+		// Keep a window that still holds the current and next tiers.
+		let index = |key: &Option<String>| {
+			key.as_ref()
+				.and_then(|key| tiers.iter().position(|tier| tier.key == *key))
+		};
+		let anchor = index(&next_tier).or(index(&current_tier)).unwrap_or(0);
+		let start = (anchor + 2)
+			.saturating_sub(MAX_BADGE_TIERS)
+			.min(tiers.len() - MAX_BADGE_TIERS);
+		tiers.truncate(start + MAX_BADGE_TIERS);
+		tiers.drain(..start);
+	}
+	tiers.shrink_to_fit();
 	let (icon, art) = dto.art.split();
 	let progress = values(dto.progress).next().and_then(|progress| {
 		(progress.threshold.is_finite() && progress.current.is_finite()).then(|| BadgeProgress {
@@ -239,11 +254,13 @@ pub fn decode_catalog(bytes: &[u8]) -> Result<BadgeCatalog, DecodeError> {
 		}
 		catalog.badges.push(badge);
 	}
-	// Stay within budget: drop locked-badge tiers first, then tier art, then whole badges.
+	// Stay within budget while keeping every owned badge's displayed tier: drop the other
+	// tiers of locked badges, then tier art, then owned badges' other tiers, then locked
+	// badges, and owned badges only last. Tiered badges sit at the end of the catalog.
 	if catalog.bytes() > MAX_CATALOG_BYTES {
 		catalog.limited = true;
 		for badge in catalog.badges.iter_mut().filter(|badge| !badge.owned) {
-			badge.tiers = Vec::new();
+			keep_displayed_tiers(badge);
 		}
 	}
 	if catalog.bytes() > MAX_CATALOG_BYTES {
@@ -251,12 +268,37 @@ pub fn decode_catalog(bytes: &[u8]) -> Result<BadgeCatalog, DecodeError> {
 			tier.art = None;
 		}
 	}
-	while catalog.bytes() > MAX_CATALOG_BYTES && catalog.badges.pop().is_some() {}
+	if catalog.bytes() > MAX_CATALOG_BYTES {
+		catalog.badges.iter_mut().for_each(keep_displayed_tiers);
+	}
+	while catalog.bytes() > MAX_CATALOG_BYTES && !catalog.badges.is_empty() {
+		let last = catalog.badges.len() - 1;
+		let index = catalog
+			.badges
+			.iter()
+			.rposition(|badge| !badge.owned)
+			.unwrap_or(last);
+		catalog.badges.remove(index);
+	}
 	catalog.badges.shrink_to_fit();
 	if !catalog.valid() {
 		return Err(DecodeError);
 	}
 	Ok(catalog)
+}
+
+/// Keeps only the current and next tiers, or the first when the badge names neither.
+fn keep_displayed_tiers(badge: &mut CatalogBadge) {
+	let keys = [&badge.current_tier, &badge.next_tier];
+	if keys.iter().any(|key| key.is_some()) {
+		badge.tiers.retain(|tier| {
+			keys.iter()
+				.any(|key| key.as_deref() == Some(tier.key.as_str()))
+		});
+	} else {
+		badge.tiers.truncate(1);
+	}
+	badge.tiers.shrink_to_fit();
 }
 
 /// Body for `PATCH /users/@me/badges/settings`.
@@ -335,18 +377,39 @@ mod tests {
 		let badges: Vec<_> = (1..=24)
 			.map(|id| {
 				json!({"badge_id": id, "name": "B", "owned": id % 2 == 0, "is_earnable": true,
+				"current_tier": "t5", "next_tier": "t6",
 				"tiers": (0..12).map(tier).collect::<Vec<_>>()})
 			})
 			.collect();
 		let catalog = decode_catalog(json!({ "badges": badges }).to_string().as_bytes()).unwrap();
 		assert!(catalog.limited && catalog.valid());
+		// Every owned badge survives, including the tiered ones at the end of the catalog,
+		// and keeps the tier it displays.
+		let owned: Vec<_> = catalog.owned().map(|b| b.id).collect();
+		assert_eq!(owned, (1..=12).map(|n| n * 2).collect::<Vec<_>>());
+		assert!(catalog.owned().all(|b| b.current().is_some()));
 		assert!(
 			catalog
 				.badges
 				.iter()
 				.filter(|b| !b.owned)
-				.all(|b| b.tiers.is_empty())
+				.all(|b| b.tiers.len() <= 2)
 		);
+	}
+
+	#[test]
+	fn long_tier_lists_keep_the_current_and_next_tiers() {
+		let tiers: Vec<_> = (0..20)
+			.map(|n| json!({"key": format!("t{n}"), "name": format!("Tier {n}")}))
+			.collect();
+		let body = json!({"badges": [{"badge_id": 18, "owned": true, "current_tier": "t16",
+			"next_tier": "t17", "tiers": tiers}]});
+		let catalog = decode_catalog(body.to_string().as_bytes()).unwrap();
+		let age = &catalog.badges[0];
+		assert_eq!(age.tiers.len(), MAX_BADGE_TIERS);
+		assert_eq!(age.tiers[0].key, "t7");
+		assert_eq!(age.current().unwrap().name, "Tier 16");
+		assert_eq!(age.next().unwrap().name, "Tier 17");
 	}
 
 	#[test]

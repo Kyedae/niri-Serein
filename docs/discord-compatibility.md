@@ -9,7 +9,11 @@ public documentation and from Userdoccers as of this date. The routes, fields an
 below were taken from the decompiled
 [official mobile client](https://github.com/Wumpus-Central/discord-mobile-datamining)
 (`modules/badges`, `BadgeId`, `LegacyBadgeIdMap`, `PendingBadgeSettings`). Live delivery
-to normal accounts is unverified.
+to normal accounts is unverified. The client lists the four tiered badges as beta
+(`BETA_BADGE_IDS`). Badge management and directory updates sit behind the
+`2026-08-badge-management` and `2026-10-badge-directory-updates` experiments. On
+October 13, the owner's account showed no tiered badges in the official client either,
+so they appear to be rolled out to some accounts only.
 
 - **Catalog.** `GET /users/{id}/badges` returns `badges[]` with numeric `badge_id`s and
   these fields:
@@ -32,12 +36,15 @@ to normal accounts is unverified.
   Discord does not document one. Catalog PNG art can be large and is decoded within a
   4 MiB / 4096 px budget, then scaled to 256 px. The read is optional, bounded to 256 KiB and shares the profile's two-second
   enrichment deadline. Failures leave the profile's own badge list. The retained catalog
-  is capped at 40 badges and 48 KiB. Locked-badge tiers, then tier art, then whole
-  badges are dropped first. SVG icons are skipped in favor of raster art.
+  is capped at 40 badges and 48 KiB, and at 12 tiers per badge, keeping a window around
+  the current and next tiers. Over budget, Serein drops locked badges' other tiers, then
+  tier art, then owned badges' other tiers, then locked badges. Owned badges go last.
+  SVG icons are skipped in favor of raster art.
 - **Profile row.** Profile badges keep their string ids, mapped to catalog numbers with the
   client's table (for example `premium_tenure_12_month_v2` → 1, `account_age` → 18).
   Owned, visible catalog badges missing from the profile response are added with catalog
-  art. Badges the catalog marks hidden are removed, and the row follows the catalog order.
+  art. Badges the catalog marks hidden are removed. The row follows the catalog order and
+  shows at most six badges, like the official client's `MAX_DISPLAYED_PROFILE_BADGES`.
   This also covers profile responses that omit the new badges, as observed for the
   owner's own profile.
   Non-hash `/badge-icons/` names (slugs up to 64 characters) are now accepted.

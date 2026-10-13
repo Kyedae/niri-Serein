@@ -1118,9 +1118,10 @@ fn partition(key: &str) -> model::CachePartition {
 		"decoration-",
 		"nameplate-",
 	];
-	// Hover-only nameplate animations are large and rarely replayed.
+	// Hover-only nameplate animations and badge catalog art are large and rarely replayed.
 	if ARTWORK.iter().any(|prefix| key.starts_with(prefix))
 		&& !key.starts_with("nameplate-anim-")
+		&& !key.starts_with("badge-art:")
 		&& !key.starts_with("emoji-unicode-")
 	{
 		model::CachePartition::Artwork
@@ -3136,6 +3137,11 @@ mod tests {
 		// Large catalog PNGs are decoded and scaled, not rejected by the icon canvas.
 		let art = budget("badge-art:https://cdn.discordapp.com/assets/content/a.png");
 		assert!(art.canvas >= 2048 && art.fit == 256 && art.frames.is_none());
+		// They use the media partition and lane, not the small-artwork budget.
+		assert_eq!(
+			partition("badge-art:https://cdn.discordapp.com/assets/content/a.png"),
+			model::CachePartition::Media
+		);
 		assert_eq!(budget("frame-30-31").fit, ui::FRAME_EDGE);
 		// Folder names are hashed before they reach the disk cache.
 		assert!(

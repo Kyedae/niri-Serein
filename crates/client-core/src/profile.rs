@@ -106,10 +106,26 @@ pub struct OwnProfile {
 #[derive(Default)]
 pub struct BadgeEditor {
 	pub saving: bool,
-	pub error: Option<&'static str>,
+	error: Option<&'static str>,
+	/// Increments with every new error, so a menu can skip ones raised before it opened.
+	errors: u64,
 	/// Increments when a write is confirmed, so open editors can drop their draft.
 	pub saved: u64,
 	request: u64,
+}
+impl BadgeEditor {
+	/// Error count to pass to [`Self::error_since`]; errors up to now count as seen.
+	pub fn errors(&self) -> u64 {
+		self.errors
+	}
+	/// The latest error, unless it was already raised when `seen` was taken.
+	pub fn error_since(&self, seen: u64) -> Option<&'static str> {
+		self.error.filter(|_| self.errors != seen)
+	}
+	fn fail(&mut self, error: &'static str) {
+		self.error = Some(error);
+		self.errors = self.errors.wrapping_add(1);
+	}
 }
 
 impl State {
@@ -128,12 +144,13 @@ impl State {
 	) -> Option<Command> {
 		if self.badge_editor.saving || !settings.valid() || self.user.is_none() {
 			if !settings.valid() {
-				self.badge_editor.error = Some("Badge settings are invalid");
+				self.badge_editor.fail("Badge settings are invalid");
 			}
 			return None;
 		}
 		if !self.demo && (self.auth != AuthState::Authenticated || !self.gateway_connected) {
-			self.badge_editor.error = Some("Badge settings need a connected session");
+			self.badge_editor
+				.fail("Badge settings need a connected session");
 			return None;
 		}
 		self.badge_editor.request = self.badge_editor.request.wrapping_add(1);
@@ -163,7 +180,7 @@ impl State {
 		let settings = match result {
 			Ok(settings) => settings,
 			Err(failure) => {
-				self.badge_editor.error = Some(failure.label());
+				self.badge_editor.fail(failure.label());
 				return;
 			}
 		};
@@ -265,6 +282,15 @@ impl State {
 			request: self.own_profile.request.wrapping_add(1),
 			..Default::default()
 		};
+	}
+	/// A lost session drops the pending badge write; it may still have applied.
+	pub(crate) fn interrupt_badge_settings(&mut self) {
+		if self.badge_editor.saving {
+			self.badge_editor.saving = false;
+			self.badge_editor.request = self.badge_editor.request.wrapping_add(1);
+			self.badge_editor
+				.fail("Save interrupted; changes may have applied. Reopen the profile to check");
+		}
 	}
 	pub(crate) fn interrupt_own_profile(&mut self) {
 		if self.own_profile.loading || self.own_profile.saving || self.own_profile.data.is_some() {
@@ -613,6 +639,33 @@ mod tests {
 			global_name: Some(Some("After".into())),
 			..Default::default()
 		}
+	}
+	#[test]
+	fn lost_sessions_release_a_pending_badge_save_with_a_fresh_error() {
+		let mut state = own_state();
+		let settings = model::badges::BadgeSettings {
+			order: vec![model::badges::id::ACCOUNT_AGE],
+			hidden: vec![],
+		};
+		let Some(Command::BadgeSettings { request, .. }) =
+			state.save_badge_settings(settings.clone())
+		else {
+			panic!("badge save expected");
+		};
+		let seen = state.badge_editor.errors();
+		state.apply_badge_settings(request, Err(Failure::Expired));
+		assert!(!state.badge_editor.saving);
+		assert!(state.badge_editor.error_since(seen).is_some());
+		// A menu opened afterwards does not show the old error.
+		assert!(
+			state
+				.badge_editor
+				.error_since(state.badge_editor.errors())
+				.is_none()
+		);
+		// The late answer to the interrupted write is ignored.
+		state.apply_badge_settings(request, Ok(settings));
+		assert_eq!(state.badge_editor.saved, 0);
 	}
 	#[test]
 	fn own_profile_requires_loaded_account_and_confirms_only_current_bounded_responses() {

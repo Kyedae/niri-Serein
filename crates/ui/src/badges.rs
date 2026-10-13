@@ -28,6 +28,8 @@ struct Customize {
 	draft: BadgeSettings,
 	/// `BadgeEditor::saved` when the draft was taken; a newer value means it was stored.
 	saved: u64,
+	/// `BadgeEditor::errors` when the menu opened or was reset; older errors stay hidden.
+	errors: u64,
 }
 struct Directory {
 	user: Id,
@@ -52,14 +54,21 @@ impl BadgePanels {
 			self.directory = None;
 		}
 	}
-	pub fn open_customize(&mut self, user: Id, anchor: Pos2, catalog: &BadgeCatalog, saved: u64) {
+	pub fn open_customize(
+		&mut self,
+		user: Id,
+		anchor: Pos2,
+		catalog: &BadgeCatalog,
+		editor: &client_core::profile::BadgeEditor,
+	) {
 		let settings = catalog.settings();
 		self.customize = Some(Customize {
 			user,
 			anchor,
 			base: settings.clone(),
 			draft: settings,
-			saved,
+			saved: editor.saved,
+			errors: editor.errors(),
 		});
 	}
 	pub fn open_directory(&mut self, user: Id, selected: Option<u32>) {
@@ -113,12 +122,14 @@ impl BadgePanels {
 		if let Some(anchor) = open_customize {
 			// The menu replaces the directory rather than stacking above its modal layer.
 			self.directory = None;
-			self.open_customize(profile.user.id, anchor, catalog, editor.saved);
+			self.open_customize(profile.user.id, anchor, catalog, editor);
 		}
 		if let Some(menu) = &mut self.customize {
 			if editor.saved != menu.saved && !editor.saving {
-				// The service confirmed this draft; it is the new baseline.
-				menu.base = menu.draft.clone();
+				// The service confirmed a save and the catalog already holds it. Edits are
+				// locked while saving, so nothing unsaved is lost.
+				menu.base = catalog.settings();
+				menu.draft = menu.base.clone();
 				menu.saved = editor.saved;
 			}
 			let (rect, picked) = customize_menu(ctx, menu, catalog, editor, avatars, demo);
@@ -153,10 +164,13 @@ pub fn badge_icon(
 		.and_then(CatalogBadge::icon)
 		.map(art_key)
 		.or_else(|| badge.icon_key());
-	let response = avatars
-		.show_icon(ui, key, size, demo, &badge.description)
-		.interact(Sense::click())
-		.on_hover_cursor(egui::CursorIcon::PointingHand);
+	let mut response = avatars.show_icon(ui, key, size, demo, &badge.description);
+	// Clicks open the catalog's menus, so without one the badge only hovers.
+	if catalog.is_some() {
+		response = response
+			.interact(Sense::click())
+			.on_hover_cursor(egui::CursorIcon::PointingHand);
+	}
 	response.on_hover_ui(|ui| hover_card(ui, avatars, badge, entry, demo))
 }
 
@@ -430,10 +444,11 @@ fn customize_menu(
 							}
 						}
 					});
-					if let Some((id, hidden)) = toggle {
+					// The draft stays as sent until the service answers.
+					if let Some((id, hidden)) = toggle.filter(|_| !editor.saving) {
 						menu.draft.set_hidden(id, hidden);
 					}
-					if let Some((id, to)) = drop {
+					if let Some((id, to)) = drop.filter(|_| !editor.saving) {
 						menu.draft.set_hidden(id, false);
 						menu.draft.reorder(id, to);
 					}
@@ -444,7 +459,7 @@ fn customize_menu(
 								.color(colors.muted),
 						);
 					}
-					if let Some(error) = editor.error {
+					if let Some(error) = editor.error_since(menu.errors) {
 						ui.label(RichText::new(error).size(12.0).color(colors.danger));
 					}
 					let changed = menu.draft != menu.base;
@@ -454,6 +469,7 @@ fn customize_menu(
 								.clicked() && !editor.saving
 							{
 								menu.draft = menu.base.clone();
+								menu.errors = editor.errors();
 							}
 							let label = if editor.saving {
 								translate("badges-saving")
@@ -1009,7 +1025,7 @@ mod tests {
 		profile.badge_catalog = Some(Box::new(synthetic_catalog()));
 		let catalog = profile.badge_catalog.as_deref().unwrap().clone();
 		let mut editor = client_core::profile::BadgeEditor::default();
-		panels.open_customize(profile.user.id, pos2(10.0, 10.0), &catalog, editor.saved);
+		panels.open_customize(profile.user.id, pos2(10.0, 10.0), &catalog, &editor);
 		let menu = panels.customize.as_mut().unwrap();
 		assert_eq!(menu.draft.hidden, [model::badges::id::STREAMING]);
 		menu.draft.set_hidden(model::badges::id::STREAMING, false);
@@ -1019,8 +1035,10 @@ mod tests {
 			panels.show(ui.ctx(), &profile, true, &editor, &mut avatars, true);
 		})
 		.drop_without_applying_deltas();
+		// The confirmed baseline comes from the catalog, not from the draft.
 		let menu = panels.customize.as_ref().unwrap();
 		assert_eq!(menu.draft, menu.base);
+		assert_eq!(menu.base, catalog.settings());
 		// Another user's profile never keeps the account's customize menu open.
 		profile.user.id = Id(77);
 		ctx.run_ui(egui::RawInput::default(), |ui| {

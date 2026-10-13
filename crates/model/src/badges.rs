@@ -373,7 +373,8 @@ impl BadgeSettings {
 }
 
 /// Profile badges to show. Owned visible catalog badges missing from the profile response
-/// are added with catalog artwork, then the row follows the catalog order.
+/// are added with catalog artwork, then the row follows the catalog order and is capped
+/// like the official client's.
 pub fn displayed_badges(
 	badges: &[ProfileBadge],
 	catalog: Option<&BadgeCatalog>,
@@ -409,6 +410,7 @@ pub fn displayed_badges(
 			.unwrap_or(usize::MAX)
 	};
 	shown.sort_by_key(rank);
+	shown.truncate(MAX_DISPLAYED_BADGES);
 	shown
 }
 

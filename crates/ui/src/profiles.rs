@@ -2360,6 +2360,7 @@ impl ProfileSession {
 	pub fn command_open(&mut self, user: User) {
 		self.full = false;
 		if self.open.as_ref().is_none_or(|open| open.id != user.id) {
+			self.badges.close();
 			self.reset_card_input();
 		}
 		if self.open.as_ref().is_some_and(|open| open.id != user.id) {
@@ -2369,6 +2370,7 @@ impl ProfileSession {
 	}
 
 	pub fn navigate(&mut self, user: User) {
+		self.badges.close();
 		self.reset_card_input();
 		self.pending.push(ProfileEffect::ClearCore);
 		self.open = Some(user);
@@ -2398,10 +2400,12 @@ impl ProfileSession {
 	pub fn preview_badges(&mut self, user: Id, directory: Option<u32>, anchor: Pos2) {
 		match directory {
 			Some(selected) => self.badges.open_directory(user, Some(selected)),
-			None => {
-				self.badges
-					.open_customize(user, anchor, &crate::badges::synthetic_catalog(), 0)
-			}
+			None => self.badges.open_customize(
+				user,
+				anchor,
+				&crate::badges::synthetic_catalog(),
+				&Default::default(),
+			),
 		}
 	}
 
@@ -3710,7 +3714,7 @@ pub fn show_with_session(
 				user.id,
 				anchor + vec2(0.0, 6.0),
 				catalog,
-				state.badge_editor.saved,
+				&state.badge_editor,
 			);
 		} else {
 			session.badges.open_directory(user.id, badge);

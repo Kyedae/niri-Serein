@@ -3914,6 +3914,7 @@ impl State {
 			self.interrupt_gif_favorites();
 			self.invalidate_messaging_permissions(Some(failure));
 			self.interrupt_own_profile();
+			self.interrupt_badge_settings();
 			self.local_game_activity = Default::default();
 			self.cancel_message_actions();
 			if self.folders_pending {
