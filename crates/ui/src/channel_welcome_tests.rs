@@ -306,3 +306,32 @@ fn channels_and_forum_posts_open_with_their_introduction_once_history_is_complet
 			.any(|text| text == "Welcome to #long-form!")
 	);
 }
+
+#[test]
+fn direct_message_introduction_shows_a_known_username_only_when_it_differs() {
+	let ctx = Context::default();
+	let mut state = test_support::demo_state();
+	dm_history(&mut state, 3);
+	let recipient = state.channel(Id(22)).unwrap().recipients[0].clone();
+	let mut view = TimelineView::default();
+	let mut painted_with = |state: &mut State, username: &str| {
+		state.apply(Envelope {
+			generation: state.generation,
+			event: Event::UserAction(client_core::user_actions::Event::Friends(Some(vec![(
+				recipient.clone(),
+				username.into(),
+			)]))),
+		});
+		frame(&ctx, &mut view, state, 900.0)
+			.into_iter()
+			.map(|(text, _)| text)
+			.collect::<Vec<_>>()
+	};
+	let name = recipient.name.clone();
+	let named = |painted: &[String]| painted.iter().filter(|text| **text == name).count();
+	let painted = painted_with(&mut state, "synthetic.handle");
+	assert!(painted.iter().any(|text| text == "synthetic.handle"));
+	let before = named(&painted);
+	// A username equal to the heading would only repeat it.
+	assert_eq!(named(&painted_with(&mut state, &name)), before);
+}

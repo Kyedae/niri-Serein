@@ -713,6 +713,9 @@ fn intro_key(intro: &Intro, state: &State) -> u64 {
 		Intro::Direct(user) => {
 			user.id.hash(&mut hasher);
 			user.name.hash(&mut hasher);
+			let heading = state.user_display_name(user);
+			heading.hash(&mut hasher);
+			intro_username(state, user, heading).hash(&mut hasher);
 			state
 				.known_profile(user.id)
 				.map(|profile| profile.mutual_guilds.len())
@@ -782,6 +785,10 @@ fn channel_intro(ui: &mut egui::Ui, name: &str, kind: u8, post: bool, width: f32
 		});
 }
 
+fn intro_username(state: &State, user: &model::User, heading: &str) -> Option<String> {
+	crate::profiles::known_username(state, user.id).filter(|username| username != heading)
+}
+
 /// "This is the beginning of your direct message history" header, as in the official client.
 fn dm_intro(
 	ui: &mut egui::Ui,
@@ -815,7 +822,8 @@ fn dm_intro(
 				.selectable(false),
 			);
 			profile.person_click(ui, &heading, None, user);
-			if let Some(username) = crate::profiles::known_username(state, user.id) {
+			// The username is shown only when known and when it adds to the heading.
+			if let Some(username) = intro_username(state, user, &name) {
 				ui.label(RichText::new(username).size(20.0).color(colors.text));
 			}
 			let text = crate::i18n::translate_args("timeline-dm-intro", &[("name", name.as_str())]);
