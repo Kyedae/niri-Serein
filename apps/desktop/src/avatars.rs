@@ -814,6 +814,11 @@ fn media_urls(rendition: &Rendition) -> Option<MediaUrls> {
 		{
 			(proxy_base(source).map(String::from), None)
 		}
+		// Provider media cannot go through Discord's proxy; a clip's still is its first frame.
+		Motion::Still if proxy_base(source).is_none() => (
+			motion_video_source(source).or(provider.then(|| source.to_owned())),
+			None,
+		),
 		Motion::Still => (
 			proxy_url(source, size, ProxyFormat::LosslessWebp),
 			proxy_base(source).and_then(|mut original| {
@@ -1683,6 +1688,15 @@ fn decode(bytes: &[u8], budget: &Budget) -> Option<egui::ColorImage> {
 			image.as_raw(),
 		));
 	}
+	if is_isobmff(bytes) {
+		return std::thread::scope(|scope| {
+			scope
+				.spawn(|| first_video_frame(bytes, budget.fit))
+				.join()
+				.ok()
+				.flatten()
+		});
+	}
 	// Provider previews can be GIF/JPEG/WebP; decode only the first frame, within limits.
 	let mut reader = image::ImageReader::new(Cursor::new(bytes))
 		.with_guessed_format()
@@ -1747,6 +1761,39 @@ fn resize_to(image: image::RgbaImage, fit: u32) -> image::RgbaImage {
 	image::DynamicImage::ImageRgba8(image)
 		.resize_exact(width, height, filter)
 		.into_rgba8()
+}
+
+/// The opening picture of a clip: the still for provider video Discord cannot proxy, and for a
+/// clip too long to decode whole.
+fn first_video_frame(bytes: &[u8], fit: u32) -> Option<egui::ColorImage> {
+	let started = Instant::now();
+	let bytes: Arc<[u8]> = bytes.into();
+	let mut decoder = platform::video::Decoder::open(Box::new(Cursor::new(bytes))).ok()?;
+	while started.elapsed() < Duration::from_secs(3) {
+		match decoder.poll_video() {
+			Ok(std::task::Poll::Pending) => {
+				let _ = decoder.poll_audio();
+				std::thread::sleep(Duration::from_millis(2));
+			}
+			Ok(std::task::Poll::Ready(Some(platform::video::Sample::Video {
+				picture, ..
+			}))) => {
+				let (width, height, rgba) = picture.to_rgba()?;
+				let pixels = (width as usize).checked_mul(height as usize)?;
+				if width == 0 || height == 0 || rgba.len() != pixels.checked_mul(4)? {
+					return None;
+				}
+				let image = resize_to(image::RgbaImage::from_raw(width, height, rgba)?, fit);
+				return Some(egui::ColorImage::from_rgba_unmultiplied(
+					[image.width() as usize, image.height() as usize],
+					image.as_raw(),
+				));
+			}
+			Ok(std::task::Poll::Ready(Some(_))) => {}
+			Ok(std::task::Poll::Ready(None)) | Err(_) => return None,
+		}
+	}
+	None
 }
 
 fn decode_motion_video(
@@ -3575,4 +3622,22 @@ pub(crate) fn debug_profile_resolution_check() {
 	println!(
 		"Profile avatar/banner renditions request source resolution; attachment signatures preserved."
 	);
+}
+
+#[test]
+fn provider_clip_stills_fetch_the_clip_and_unknown_hosts_stay_unfetched() {
+	let still = |source: &str| {
+		media_urls(&Rendition::parse(&format!("media:is:320x240:{source}")).unwrap())
+			.map(|urls| (urls.primary, urls.fallback))
+	};
+	for source in [
+		"https://static.klipy.com/ii/synthetic/a1.mp4",
+		"https://media.tenor.com/synthetic/clip.mp4",
+		"https://static.klipy.com/ii/synthetic/a1.webp",
+	] {
+		assert_eq!(still(source), Some((source.to_owned(), None)));
+	}
+	assert!(still("https://example.com/clip.mp4").is_none());
+	assert!(is_isobmff(b"\0\0\0\x18ftypmp42"));
+	assert!(decode(b"\0\0\0\x18ftypmp42 not a clip", &budget("gif:x")).is_none());
 }
