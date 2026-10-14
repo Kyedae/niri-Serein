@@ -4191,6 +4191,10 @@ voice-voice-card-section-disconnect = 断开连接
 # Context: voice_card_section
 voice-voice-card-section-dismiss-call = 关闭通话
 # Context: voice_card_section
+voice-voice-card-section-reconnect-attempt = { $reason } · 第 { $attempt } 次尝试，共 { $total } 次
+# Context: voice_card_section
+voice-voice-card-section-reconnecting = 正在重新连接…
+# Context: voice_card_section
 voice-voice-card-section-microphone-unavailable-a-still-connected-choose-another-input-in-audio = 麦克风不可用 · 仍保持连接。请在音频设置改选其他输入。
 # Context: voice_channel_button
 voice-voice-channel-button-connected = ，已连接
@@ -4883,3 +4887,11 @@ badges-all-levels = 查看所有等级
 badges-hide-levels = 隐藏等级
 # Context: badges
 badges-manage = 管理徽章
+page-language-time = 语言与时间
+description-language-time = 显示语言和时间格式。
+time-format-group = 时间格式
+time-format-auto = 自动
+time-format-12-hour = 12 小时制
+time-format-24-hour = 24 小时制
+profiles-status-edit = 编辑状态
+profiles-status-clear = 清除状态

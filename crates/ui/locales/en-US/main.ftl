@@ -4173,6 +4173,10 @@ voice-voice-card-section-disconnect = Disconnect
 # Context: voice_card_section
 voice-voice-card-section-dismiss-call = Dismiss call
 # Context: voice_card_section
+voice-voice-card-section-reconnect-attempt = { $reason } · attempt { $attempt } of { $total }
+# Context: voice_card_section
+voice-voice-card-section-reconnecting = Reconnecting…
+# Context: voice_card_section
 voice-voice-card-section-microphone-unavailable-a-still-connected-choose-another-input-in-audio = Microphone unavailable · still connected. Choose another input in Audio settings.
 # Context: voice_channel_button
 voice-voice-channel-button-connected = , connected
@@ -4868,3 +4872,11 @@ badges-all-levels = View all levels
 badges-hide-levels = Hide levels
 # Context: badges
 badges-manage = Manage your badges
+page-language-time = Language & Time
+description-language-time = Display language and how times are shown.
+time-format-group = Time format
+time-format-auto = Auto
+time-format-12-hour = 12-hour
+time-format-24-hour = 24-hour
+profiles-status-edit = Edit status
+profiles-status-clear = Clear status

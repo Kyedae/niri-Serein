@@ -61,6 +61,10 @@ impl BadgePanels {
 		catalog: &BadgeCatalog,
 		editor: &client_core::profile::BadgeEditor,
 	) {
+		if catalog.limited {
+			self.customize = None;
+			return;
+		}
 		let settings = catalog.settings();
 		self.customize = Some(Customize {
 			user,
@@ -98,7 +102,7 @@ impl BadgePanels {
 		if self
 			.customize
 			.as_ref()
-			.is_some_and(|menu| menu.user != profile.user.id || !own)
+			.is_some_and(|menu| menu.user != profile.user.id || !own || catalog.limited)
 		{
 			self.customize = None;
 		}
@@ -520,7 +524,8 @@ fn directory_modal(
 	{
 		directory.selected = owned.first().or(earnable.first()).map(|entry| entry.id);
 	}
-	let width = (ctx.content_rect().width() - 48.0).clamp(320.0, 740.0);
+	let width = (ctx.content_rect().width() - 48.0).clamp(1.0, 740.0);
+	let height = (ctx.content_rect().height() - 48.0).clamp(1.0, 520.0);
 	let modal = egui::Modal::new(egui::Id::unique(("badge-directory", directory.user)))
 		.backdrop_color(crate::dialog::backdrop(ctx))
 		.frame(
@@ -530,7 +535,6 @@ fn directory_modal(
 		)
 		.show(ctx, |ui| {
 			ui.set_width(width);
-			ui.set_min_height(520.0);
 			let split = width >= 640.0;
 			let list_width = if split { 320.0 } else { width };
 			let view = DirectoryView {
@@ -538,27 +542,44 @@ fn directory_modal(
 				owned: &owned,
 				earnable: &earnable,
 				own,
+				complete: !catalog.limited,
 				width: list_width,
 			};
 			if split {
 				ui.horizontal_top(|ui| {
 					ui.spacing_mut().item_spacing.x = 0.0;
 					ui.allocate_ui_with_layout(
-						vec2(list_width, 520.0),
+						vec2(list_width, height),
 						egui::Layout::top_down(egui::Align::Min),
 						|ui| {
-							customize = directory_list(ui, directory, &view, avatars, demo);
+							egui::ScrollArea::vertical()
+								.id_salt("badge-directory-list")
+								.max_height(height)
+								.auto_shrink([false, false])
+								.show(ui, |ui| {
+									customize = directory_list(ui, directory, &view, avatars, demo);
+								});
 						},
 					);
 					ui.allocate_ui_with_layout(
-						vec2(width - list_width, 520.0),
+						vec2(width - list_width, height),
 						egui::Layout::top_down(egui::Align::Min),
-						|ui| directory_details(ui, directory, catalog, avatars, demo),
+						|ui| {
+							egui::ScrollArea::vertical()
+								.id_salt("badge-directory-details")
+								.max_height(height)
+								.auto_shrink([false, false])
+								.show(ui, |ui| {
+									directory_details(ui, directory, catalog, avatars, demo)
+								});
+						},
 					);
 				});
 			} else {
 				egui::ScrollArea::vertical()
-					.max_height(ctx.content_rect().height() - 64.0)
+					.id_salt("badge-directory-stacked")
+					.max_height(height)
+					.auto_shrink([false, false])
 					.show(ui, |ui| {
 						customize = directory_list(ui, directory, &view, avatars, demo);
 						directory_details(ui, directory, catalog, avatars, demo);
@@ -585,6 +606,7 @@ struct DirectoryView<'a> {
 	owned: &'a [&'a CatalogBadge],
 	earnable: &'a [&'a CatalogBadge],
 	own: bool,
+	complete: bool,
 	width: f32,
 }
 
@@ -653,7 +675,7 @@ fn directory_list(
 			);
 			grid(ui, view.earnable);
 		}
-		if view.own && !view.owned.is_empty() {
+		if view.own && view.complete && !view.owned.is_empty() {
 			ui.add_space(12.0);
 			let button = design::secondary_button(ui, &translate("badges-customize-button"));
 			if button.clicked() {
@@ -685,7 +707,6 @@ fn directory_details(
 		.inner_margin(24)
 		.show(ui, |ui| {
 			ui.set_width(ui.available_width());
-			ui.set_min_height(472.0);
 			badge_details(ui, avatars, entry, &mut directory.levels, demo);
 		});
 }
@@ -1013,6 +1034,228 @@ mod tests {
 		assert!(eyebrow.is_none() && title.ends_with("Starter"));
 		let (eyebrow, title) = titles(catalog.get(model::badges::id::GAME_TIME).unwrap());
 		assert_eq!((eyebrow, title.as_str()), (None, "Game Time"));
+	}
+
+	#[test]
+	fn incomplete_catalogs_cannot_open_or_keep_a_customize_draft() {
+		let ctx = egui::Context::default();
+		let mut panels = BadgePanels::default();
+		let mut avatars = Avatars::default();
+		let mut profile =
+			crate::profiles::synthetic(&test_support::message(1, Id(20)).author, None);
+		let mut catalog = synthetic_catalog();
+		let editor = client_core::profile::BadgeEditor::default();
+		catalog.limited = true;
+		panels.open_customize(profile.user.id, pos2(10.0, 10.0), &catalog, &editor);
+		assert!(panels.customize.is_none());
+		catalog.limited = false;
+		panels.open_customize(profile.user.id, pos2(10.0, 10.0), &catalog, &editor);
+		panels
+			.customize
+			.as_mut()
+			.unwrap()
+			.draft
+			.set_hidden(model::badges::id::STREAMING, false);
+		catalog.limited = true;
+		profile.badge_catalog = Some(Box::new(catalog));
+		ctx.run_ui(egui::RawInput::default(), |ui| {
+			let (_, action) = panels.show(ui.ctx(), &profile, true, &editor, &mut avatars, true);
+			assert!(action.is_none());
+		})
+		.drop_without_applying_deltas();
+		assert!(panels.customize.is_none());
+		panels.open_directory(profile.user.id, None);
+		let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+			panels.show(ui.ctx(), &profile, true, &editor, &mut avatars, true);
+		});
+		assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape,
+			egui::Shape::Text(text) if text.galley.job.text == translate("badges-customize-button"))));
+		output.drop_without_applying_deltas();
+	}
+
+	#[test]
+	fn directory_fits_short_windows_and_scrolls_each_wide_column() {
+		for size in [vec2(1100.0, 700.0), vec2(1100.0, 360.0), vec2(600.0, 360.0)] {
+			let ctx = egui::Context::default();
+			let mut avatars = Avatars::default();
+			let mut profile =
+				crate::profiles::synthetic(&test_support::message(1, Id(20)).author, None);
+			let mut catalog = synthetic_catalog();
+			let template = catalog.badges[2].clone();
+			for id in 30..66 {
+				catalog.badges.push(CatalogBadge {
+					id,
+					..template.clone()
+				});
+			}
+			let tier = catalog.badges[0].tiers[0].clone();
+			catalog.badges[0].tiers = (0..model::badges::MAX_BADGE_TIERS)
+				.map(|index| model::badges::BadgeTier {
+					key: format!("tier-{index}"),
+					name: format!("Tier {index}"),
+					..tier.clone()
+				})
+				.collect();
+			catalog.badges[0].current_tier = Some("tier-0".into());
+			catalog.badges[0].next_tier = Some("tier-1".into());
+			let details_title = titles(&catalog.badges[0]).1.to_uppercase();
+			assert!(catalog.valid());
+			profile.badge_catalog = Some(Box::new(catalog));
+			let screen = Rect::from_min_size(Pos2::ZERO, size);
+			let mut directory = Directory {
+				user: profile.user.id,
+				selected: Some(model::badges::id::PREMIUM_TENURE),
+				levels: true,
+			};
+			let mut frame = |pointer, scroll| {
+				let mut rect = Rect::NOTHING;
+				let output = ctx.run_ui(
+					egui::RawInput {
+						screen_rect: Some(screen),
+						events: vec![egui::Event::PointerMoved(pointer)],
+						..Default::default()
+					},
+					|ui| {
+						ui.input_mut(|input| input.smooth_scroll_delta.y = scroll);
+						rect = directory_modal(
+							ui.ctx(),
+							&mut directory,
+							&profile,
+							profile.badge_catalog.as_deref().unwrap(),
+							true,
+							&mut avatars,
+							true,
+						)
+						.0;
+					},
+				);
+				(rect, output)
+			};
+			for _ in 0..3 {
+				frame(Pos2::ZERO, 0.0).1.drop_without_applying_deltas();
+			}
+			let (rect, output) = frame(Pos2::ZERO, 0.0);
+			assert!(screen.contains_rect(rect), "{size:?}: {rect:?}");
+			let text_y = |output: &egui::FullOutput, label: &str| {
+				output
+					.shapes
+					.iter()
+					.find_map(|shape| match &shape.shape {
+						egui::Shape::Text(text) if text.galley.job.text == label => {
+							Some(text.pos.y)
+						}
+						_ => None,
+					})
+					.unwrap_or_else(|| panic!("Missing label {label}"))
+			};
+			if size.x > 1000.0 {
+				let list_title = translate("badges-your");
+				let original_list = text_y(&output, &list_title);
+				let original_details = text_y(&output, &details_title);
+				output.drop_without_applying_deltas();
+				let pointer = rect.left_top() + vec2(100.0, 100.0);
+				frame(pointer, 0.0).1.drop_without_applying_deltas();
+				frame(pointer, -10.0).1.drop_without_applying_deltas();
+				let (_, output) = frame(pointer, 0.0);
+				let scrolled_list = text_y(&output, &list_title);
+				assert!(scrolled_list < original_list - 1.0);
+				assert!((text_y(&output, &details_title) - original_details).abs() < 0.1);
+				output.drop_without_applying_deltas();
+				let pointer = rect.right_top() + vec2(-100.0, 100.0);
+				frame(pointer, 0.0).1.drop_without_applying_deltas();
+				frame(pointer, -10.0).1.drop_without_applying_deltas();
+				let (_, output) = frame(pointer, 0.0);
+				assert!(text_y(&output, &details_title) < original_details - 1.0);
+				assert!((text_y(&output, &list_title) - scrolled_list).abs() < 0.1);
+				output.drop_without_applying_deltas();
+			} else {
+				output.drop_without_applying_deltas();
+			}
+		}
+	}
+
+	#[test]
+	fn saving_locks_badge_edits_and_reopened_menu_receives_confirmation() {
+		let ctx = egui::Context::default();
+		let mut panels = BadgePanels::default();
+		let mut avatars = Avatars::default();
+		let mut profile =
+			crate::profiles::synthetic(&test_support::message(1, Id(20)).author, None);
+		profile.badge_catalog = Some(Box::new(synthetic_catalog()));
+		let mut editor = client_core::profile::BadgeEditor::default();
+		editor.saving = true;
+		panels.open_customize(
+			profile.user.id,
+			pos2(10.0, 10.0),
+			profile.badge_catalog.as_deref().unwrap(),
+			&editor,
+		);
+		let mut frame = |events| {
+			ctx.run_ui(
+				egui::RawInput {
+					events,
+					..Default::default()
+				},
+				|ui| {
+					let (_, action) =
+						panels.show(ui.ctx(), &profile, true, &editor, &mut avatars, true);
+					assert!(action.is_none());
+				},
+			)
+		};
+		frame(vec![]).drop_without_applying_deltas();
+		let output = frame(vec![]);
+		let tile = output
+			.shapes
+			.iter()
+			.filter_map(|shape| match &shape.shape {
+				egui::Shape::Rect(rect) if rect.rect.size() == Vec2::splat(TILE) => Some(rect.rect),
+				_ => None,
+			})
+			.next_back()
+			.expect("The hidden Streaming badge is drawn");
+		output.drop_without_applying_deltas();
+		frame(vec![
+			egui::Event::PointerMoved(tile.center()),
+			egui::Event::PointerButton {
+				pos: tile.center(),
+				button: egui::PointerButton::Primary,
+				pressed: true,
+				modifiers: egui::Modifiers::NONE,
+			},
+		])
+		.drop_without_applying_deltas();
+		frame(vec![egui::Event::PointerButton {
+			pos: tile.center(),
+			button: egui::PointerButton::Primary,
+			pressed: false,
+			modifiers: egui::Modifiers::NONE,
+		}])
+		.drop_without_applying_deltas();
+		assert_eq!(
+			panels.customize.as_ref().unwrap().draft.hidden,
+			[model::badges::id::STREAMING]
+		);
+		panels.close();
+		panels.open_customize(
+			profile.user.id,
+			pos2(10.0, 10.0),
+			profile.badge_catalog.as_deref().unwrap(),
+			&editor,
+		);
+		let catalog = profile.badge_catalog.as_deref_mut().unwrap();
+		let mut accepted = catalog.settings();
+		accepted.set_hidden(model::badges::id::STREAMING, false);
+		catalog.apply(&accepted);
+		editor.saving = false;
+		editor.saved = 1;
+		ctx.run_ui(egui::RawInput::default(), |ui| {
+			panels.show(ui.ctx(), &profile, true, &editor, &mut avatars, true);
+		})
+		.drop_without_applying_deltas();
+		let menu = panels.customize.as_ref().unwrap();
+		assert_eq!(menu.base, accepted);
+		assert_eq!(menu.draft, accepted);
 	}
 
 	#[test]

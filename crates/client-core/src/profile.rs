@@ -153,6 +153,27 @@ impl State {
 				.fail("Badge settings need a connected session");
 			return None;
 		}
+		let own = self.user.as_ref().map(|user| user.id)?;
+		let profile = self
+			.profile
+			.as_ref()
+			.filter(|view| view.user == own)
+			.and_then(|view| view.data.as_ref())
+			.or_else(|| {
+				self.own_profile
+					.data
+					.as_ref()
+					.filter(|profile| profile.user.id == own)
+			})
+			.or_else(|| self.known_profile(own));
+		if profile
+			.and_then(|profile| profile.badge_catalog.as_deref())
+			.is_some_and(|catalog| catalog.limited)
+		{
+			self.badge_editor
+				.fail("Reload your profile before editing an incomplete badge catalog");
+			return None;
+		}
 		self.badge_editor.request = self.badge_editor.request.wrapping_add(1);
 		self.badge_editor.saving = true;
 		self.badge_editor.error = None;
@@ -639,6 +660,34 @@ mod tests {
 			global_name: Some(Some("After".into())),
 			..Default::default()
 		}
+	}
+	#[test]
+	fn incomplete_badge_catalog_cannot_replace_account_settings() {
+		let mut state = own_state();
+		let mut profile = own_data("Before");
+		profile.badge_catalog = Some(Box::new(model::badges::BadgeCatalog {
+			badges: vec![],
+			limited: true,
+		}));
+		state.own_profile.data = Some(*profile);
+		let settings = model::badges::BadgeSettings {
+			order: vec![model::badges::id::ACCOUNT_AGE],
+			hidden: vec![],
+		};
+		let seen = state.badge_editor.errors();
+		assert!(state.save_badge_settings(settings.clone()).is_none());
+		assert!(!state.badge_editor.saving);
+		assert!(state.badge_editor.error_since(seen).is_some());
+		state
+			.own_profile
+			.data
+			.as_mut()
+			.unwrap()
+			.badge_catalog
+			.as_mut()
+			.unwrap()
+			.limited = false;
+		assert!(state.save_badge_settings(settings).is_some());
 	}
 	#[test]
 	fn lost_sessions_release_a_pending_badge_save_with_a_fresh_error() {

@@ -2775,6 +2775,61 @@ mod tests {
         }).await.unwrap();
 	}
 	#[tokio::test]
+	async fn optional_badge_capacity_preserves_profiles_but_expiry_ends_session() {
+		tokio::time::timeout(Duration::from_secs(5), async {
+			for case in 0..3 {
+				let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+				let mut api = DiscordApi::new(Arc::new(
+					SessionSecret::from_owner_input("SYNTHETIC_BADGE_TOKEN".into()).unwrap(),
+				))
+				.unwrap();
+				api.base = format!("http://{}", listener.local_addr().unwrap());
+				let server = tokio::spawn(async move {
+					let (mut stream, _) = listener.accept().await.unwrap();
+					let mut buffer = [0; 4096];
+					let n = stream.read(&mut buffer).await.unwrap();
+					assert!(std::str::from_utf8(&buffer[..n]).unwrap().starts_with("GET /users/5/profile?"));
+					let body = r#"{"user":{"id":"5","username":"Synthetic"},"badges":[{"id":"premium","description":"Subscriber"}]}"#;
+					stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+					let (mut stream, _) = listener.accept().await.unwrap();
+					let n = stream.read(&mut buffer).await.unwrap();
+					assert!(std::str::from_utf8(&buffer[..n]).unwrap().starts_with("GET /users/5/badges HTTP/1.1"));
+					let header = match case {
+						0 => format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", discord_protocol::badges::MAX_CATALOG_WIRE + 1),
+						1 => "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".into(),
+						_ => "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into(),
+					};
+					stream.write_all(header.as_bytes()).await.unwrap();
+					if case == 1 {
+						// The reader may close the socket as soon as the streaming bound is hit.
+						let _ = stream.write_all(&vec![b' '; discord_protocol::badges::MAX_CATALOG_WIRE + 1]).await;
+					}
+				});
+				let event = api.execute(Command::Profile {
+					user: model::Id(5),
+					guild: None,
+					request: 1,
+					with_mutuals: true,
+					cosmetics: Default::default(),
+				}).await;
+				if case == 2 {
+					assert!(matches!(event, Event::Profile { result: Err(Failure::Expired), .. }));
+					assert!(api.stopped());
+				} else {
+					let Event::Profile { result: Ok(profile), .. } = event else {
+						panic!("oversized optional catalog must preserve the profile");
+					};
+					assert!(profile.badge_catalog.is_none());
+					assert_eq!(profile.badges.len(), 1);
+					assert_eq!(profile.badges[0].id, "premium");
+					assert!(!api.stopped());
+				}
+				server.await.unwrap();
+			}
+		}).await.unwrap();
+	}
+
+	#[tokio::test]
 	async fn profiles_are_scoped_capped_and_do_not_block_message_writes() {
 		let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
 		let mut api = DiscordApi::new(Arc::new(

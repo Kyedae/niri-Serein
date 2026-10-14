@@ -25,6 +25,8 @@ impl DiscordApi {
 			.await
 		{
 			Ok(bytes) => Ok(badges::decode_catalog(&bytes).ok()),
+			// An oversized optional response must not discard the already loaded profile.
+			Err(Failure::Capacity) => Ok(None),
 			Err(failure) if failure.ends_session() => Err(failure),
 			Err(_) => Ok(None),
 		}
