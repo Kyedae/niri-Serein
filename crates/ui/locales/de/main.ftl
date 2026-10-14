@@ -4729,3 +4729,9 @@ timeline-dm-intro = Das ist der Anfang deines Direktnachrichtenverlaufs mit { $n
 timeline-channel-intro-title = Willkommen in #{ $channel }!
 # Context: timeline_channel_intro
 timeline-channel-intro-start = Das ist der Anfang des Kanals #{ $channel }.
+page-language-time = Sprache & Zeit
+description-language-time = Anzeigesprache und Darstellung der Uhrzeit.
+time-format-group = Zeitformat
+time-format-auto = Automatisch
+time-format-12-hour = 12-Stunden
+time-format-24-hour = 24-Stunden

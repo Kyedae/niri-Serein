@@ -29,6 +29,8 @@ enum Page {
 	Activity,
 	Voice,
 	Keybinds,
+	/// Display language and clock style.
+	LanguageTime,
 	Storage,
 	Updates,
 	Extensions,
@@ -36,7 +38,7 @@ enum Page {
 }
 impl Page {
 	/// Every page in sidebar order; the narrow-window page picker lists them the same way.
-	const ALL: [Self; 14] = [
+	const ALL: [Self; 15] = [
 		Self::Account,
 		Self::Profile,
 		Self::MessagingPermissions,
@@ -47,6 +49,7 @@ impl Page {
 		Self::Voice,
 		Self::Keybinds,
 		Self::Activity,
+		Self::LanguageTime,
 		Self::General,
 		Self::Updates,
 		Self::Themes,
@@ -73,6 +76,7 @@ impl Page {
 				Self::Voice,
 				Self::Keybinds,
 				Self::Activity,
+				Self::LanguageTime,
 				Self::General,
 				Self::Updates,
 			],
@@ -84,6 +88,7 @@ impl Page {
 			Self::Account => "page-account",
 			Self::Profile => "page-profile",
 			Self::General => "page-general",
+			Self::LanguageTime => "page-language-time",
 			Self::Appearance => "page-appearance",
 			Self::Chat => "page-chat",
 			Self::MessagingPermissions => "page-messaging-permissions",
@@ -105,6 +110,7 @@ impl Page {
 			Self::Account => "description-account",
 			Self::Profile => "description-profile",
 			Self::General => "description-general",
+			Self::LanguageTime => "description-language-time",
 			Self::Appearance => "description-appearance",
 			Self::Chat => "description-chat",
 			Self::MessagingPermissions => "description-messaging-permissions",
@@ -145,6 +151,9 @@ impl Page {
 			}
 			Self::Voice => {
 				"voice video camera preview audio microphone speakers devices volume gain noise suppression push to talk"
+			}
+			Self::LanguageTime => {
+				"language time clock 12 hour 24 hour am pm format locale translation"
 			}
 			Self::Storage => "data privacy local storage clear cache drafts credentials",
 			Self::Updates => {
@@ -447,6 +456,7 @@ impl MessagingUi {
 								}
 								match self.settings.page {
 									Page::General => self.general_settings(ui, state.demo),
+									Page::LanguageTime => self.language_time_settings(ui),
 									Page::Account => self.account_page(ui, state),
 									Page::Profile => self.settings.editor.show(
 										ui,
@@ -801,7 +811,7 @@ impl MessagingUi {
 		);
 	}
 
-	fn general_settings(&mut self, ui: &mut egui::Ui, _demo: bool) {
+	fn language_time_settings(&mut self, ui: &mut egui::Ui) {
 		let language = self.language;
 		let title = language.text("language-group");
 		design::group(ui, &title, |ui| {
@@ -822,6 +832,25 @@ impl MessagingUi {
 					});
 			});
 		});
+		let title = language.text("time-format-group");
+		design::group(ui, &title, |ui| {
+			for (format, key) in [
+				(model::TimeFormat::Auto, "time-format-auto"),
+				(model::TimeFormat::TwelveHour, "time-format-12-hour"),
+				(model::TimeFormat::TwentyFourHour, "time-format-24-hour"),
+			] {
+				if design::radio_row(ui, self.time_format == format, &language.text(key), None)
+					.clicked()
+				{
+					self.time_format = format;
+				}
+			}
+		});
+		crate::local_time::set_format(self.time_format, self.language);
+	}
+
+	fn general_settings(&mut self, ui: &mut egui::Ui, _demo: bool) {
+		let language = self.language;
 		let title = language.text("general-startup");
 		design::group(ui, &title, |ui| {
 			ui.add_enabled_ui(self.startup_available && !self.startup_busy, |ui| {

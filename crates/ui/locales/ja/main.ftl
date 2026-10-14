@@ -4715,3 +4715,9 @@ timeline-dm-intro = { $name } とのダイレクトメッセージ履歴の始�
 timeline-channel-intro-title = #{ $channel } へようこそ！
 # Context: timeline_channel_intro
 timeline-channel-intro-start = #{ $channel } チャンネルの始まりです。
+page-language-time = 言語と時刻
+description-language-time = 表示言語と時刻の表示形式。
+time-format-group = 時刻の形式
+time-format-auto = 自動
+time-format-12-hour = 12時間制
+time-format-24-hour = 24時間制
