@@ -1143,23 +1143,37 @@ impl Theme {
 					Self::overlaid(rgb(top), bright),
 					Self::overlaid(rgb(bottom), bright),
 				);
+				let text = if bright {
+					Color32::from_rgb(24, 27, 31)
+				} else {
+					Color32::from_rgb(242, 243, 245)
+				};
+				// Bound every channel so contrast also holds between gradient endpoints.
+				let channel = |a: u8, b: u8| if bright { a.min(b) } else { a.max(b) };
+				let background = Color32::from_rgb(
+					channel(top.r(), bottom.r()),
+					channel(top.g(), bottom.g()),
+					channel(top.b(), bottom.b()),
+				);
+				let readable = |color: Color32| {
+					let rgb = (u32::from(color.r()) << 16)
+						| (u32::from(color.g()) << 8)
+						| u32::from(color.b());
+					design::role_name_color(rgb, background, text)
+				};
 				Self {
 					gradient: Some((top, bottom)),
-					text: if bright {
-						Color32::from_rgb(24, 27, 31)
-					} else {
-						Color32::from_rgb(242, 243, 245)
-					},
-					muted: if bright {
+					text,
+					muted: readable(if bright {
 						Color32::from_rgb(70, 76, 84)
 					} else {
 						Color32::from_rgb(190, 195, 201)
-					},
-					link: if bright {
+					}),
+					link: readable(if bright {
 						Color32::from_rgb(0, 75, 160)
 					} else {
 						Color32::from_rgb(0, 176, 244)
-					},
+					}),
 					// The overlaid gradient already carries the contrast; the body only
 					// separates itself slightly, as Discord's sections do.
 					panel: if bright {
@@ -1208,7 +1222,7 @@ impl Theme {
 	fn bright([top, bottom]: [u32; 2]) -> bool {
 		(luma(rgb(top)) + luma(rgb(bottom))) * 0.5 > 0.5
 	}
-	/// Discord lays a 60% overlay over both theme colors, black for dark themes and white for
+	/// Estimated 60% overlay from the reference colors: black for dark themes and white for
 	/// light ones, so a profile reads as a tinted card rather than the raw picked colors.
 	fn overlaid(color: Color32, bright: bool) -> Color32 {
 		color.lerp_to_gamma(
@@ -3975,6 +3989,38 @@ mod tests {
 		assert!(clock(false).is_none());
 	}
 
+	#[test]
+	fn mixed_profile_gradients_keep_text_readable_at_and_between_endpoints() {
+		let palette = design::colors(true, Default::default());
+		for raw in [
+			[0xffffff, 0x010101],
+			[0x010101, 0xffffff],
+			[0xffffff, 0x000000],
+			[0x000000, 0xffffff],
+			[0xff0000, 0x00ff00],
+			[0x0000ff, 0xff00ff],
+			[0x515153, 0x373738],
+		] {
+			let theme = Theme::new(&palette, Some(raw));
+			let (top, bottom) = theme.gradient.unwrap();
+			let [r, g, b, alpha] = theme.panel.to_srgba_unmultiplied();
+			for step in 0..=16 {
+				let background = top.lerp_to_gamma(bottom, step as f32 / 16.0);
+				let body =
+					background.lerp_to_gamma(Color32::from_rgb(r, g, b), f32::from(alpha) / 255.0);
+				for background in [background, body] {
+					for foreground in [theme.text, theme.muted, theme.link] {
+						let a = design::luminance(foreground) + 0.05;
+						let b = design::luminance(background) + 0.05;
+						assert!(
+							a.max(b) / a.min(b) >= 4.5,
+							"{raw:x?}, step {step}, {foreground:?} on {background:?}"
+						);
+					}
+				}
+			}
+		}
+	}
 	#[test]
 	fn bright_profile_gradient_is_softened_without_flattening_the_body() {
 		let palette = design::colors(true, Default::default());
