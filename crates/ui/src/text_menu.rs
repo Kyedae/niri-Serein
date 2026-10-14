@@ -1,11 +1,36 @@
 //! Right-click menu for editable text: cut, copy, paste and select all, like Discord's.
 use egui::text::{CCursor, CCursorRange};
 
-/// Shows the menu for the text edit `id` holding `text`. Cut and copy act on the selection;
+pub(crate) fn selection_for_menu(ctx: &egui::Context, id: egui::Id) -> Option<CCursorRange> {
+	(ctx.input(|input| input.pointer.button_pressed(egui::PointerButton::Secondary))
+		|| ctx
+			.read_response(id)
+			.is_some_and(|response| response.context_menu_opened()))
+	.then(|| egui::TextEdit::load_state(ctx, id)?.cursor.char_range())
+	.flatten()
+	.filter(|range| !range.is_empty())
+}
+
+/// Shows the menu for the text edit `id` holding `text`. Cut marks the response changed;
 /// Paste returns true so the caller can read the system clipboard, which also carries files and
 /// images copied in other apps.
-pub(crate) fn show(response: &egui::Response, id: egui::Id, text: &mut String) -> bool {
+pub(crate) fn show(
+	response: &mut egui::Response,
+	id: egui::Id,
+	text: &mut String,
+	paste_enabled: bool,
+	selection: Option<CCursorRange>,
+) -> bool {
+	// TextEdit clears selections on secondary presses and when focus moves to the menu.
+	if (response.contains_pointer() || response.context_menu_opened())
+		&& let Some(selection) = selection
+	{
+		let mut state = egui::TextEdit::load_state(&response.ctx, id).unwrap_or_default();
+		state.cursor.set_char_range(Some(selection));
+		state.store(&response.ctx, id);
+	}
 	let mut paste = false;
+	let mut changed = false;
 	response.context_menu(|ui| {
 		let ctx = ui.ctx().clone();
 		let mut state = egui::TextEdit::load_state(&ctx, id).unwrap_or_default();
@@ -27,6 +52,7 @@ pub(crate) fn show(response: &egui::Response, id: egui::Id, text: &mut String) -
 			ctx.copy_text(text[range.clone()].to_owned());
 			let start = text[..range.start].chars().count();
 			text.replace_range(range, "");
+			changed = true;
 			state
 				.cursor
 				.set_char_range(Some(CCursorRange::one(CCursor::new(start))));
@@ -40,7 +66,7 @@ pub(crate) fn show(response: &egui::Response, id: egui::Id, text: &mut String) -
 			ctx.copy_text(text[range].to_owned());
 			ui.close();
 		}
-		if item(ui, "text-menu-paste", true) {
+		if item(ui, "text-menu-paste", paste_enabled) {
 			ctx.memory_mut(|memory| memory.request_focus(id));
 			paste = true;
 			ui.close();
@@ -56,6 +82,9 @@ pub(crate) fn show(response: &egui::Response, id: egui::Id, text: &mut String) -
 			ui.close();
 		}
 	});
+	if changed {
+		response.mark_changed();
+	}
 	paste
 }
 

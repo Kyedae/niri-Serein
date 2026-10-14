@@ -6,6 +6,7 @@ mod account_menu;
 mod appearance_transparency_tests;
 mod archives;
 mod audio;
+mod badges;
 mod forwarding;
 mod role_names;
 pub use audio::{AudioCommand, AudioState, AudioUi};
@@ -68,7 +69,7 @@ mod guild_folders;
 mod highlight;
 pub mod icons;
 mod invites;
-mod local_time;
+pub mod local_time;
 mod markdown;
 mod member_search;
 mod mentions;
@@ -301,6 +302,8 @@ pub struct MessagingUi {
 	pub cosmetics: model::CosmeticPreferences,
 	/// Disk budgets and retention for downloaded images.
 	pub image_cache: model::CachePreferences,
+	/// Clock style for message times.
+	pub time_format: model::TimeFormat,
 	/// Latest disk use of the media and shared-artwork caches, once measured.
 	pub image_cache_usage: Option<[model::CacheUsage; 2]>,
 	/// An image cache partition the owner asked to empty; the desktop consumes it.
@@ -757,6 +760,14 @@ impl MessagingUi {
 	#[cfg(any(test, feature = "demo"))]
 	pub fn preview_profile_popout(&mut self, user: model::User) {
 		self.profile.command_open(user);
+	}
+	/// Fixture-only entry point: a profile card with its badge directory (focused on
+	/// `selected`) or, without one, the account's customize menu at `anchor`.
+	#[cfg(any(test, feature = "demo"))]
+	pub fn preview_badges(&mut self, user: model::User, selected: Option<u32>, anchor: egui::Pos2) {
+		let id = user.id;
+		self.profile.command_open(user);
+		self.profile.preview_badges(id, selected, anchor);
 	}
 	#[cfg(any(test, feature = "demo"))]
 	pub fn preview_full_profile(&mut self, user: model::User) {
@@ -3598,6 +3609,7 @@ impl MessagingUi {
                             );
                             rich_layout.select_deleted_inline(ctx, composer_id);
                         }
+                        let selection = text_menu::selection_for_menu(ctx, composer_id);
                         let mut output = egui::ScrollArea::vertical()
                             .id_salt((composer_id, channel, editing_key))
                             .max_height(ui.ctx().viewport_rect().height() * 0.5)
@@ -3691,7 +3703,7 @@ impl MessagingUi {
                             output.response.request_focus();
                             mention_changed = true;
                         }
-                        if text_menu::show(&output.response, composer_id, draft) {
+                        if text_menu::show(&mut output.response, composer_id, draft, paste_allowed, selection) {
                             self.menu_paste = Some(composer_id);
                         }
                         let edit = output.response;
@@ -5199,6 +5211,9 @@ impl MessagingUi {
 			{
 				commands.push(command);
 			}
+			self.profile
+				.own_status
+				.clone_from(&self.own_presence.custom_status);
 			let anchor = self.profile.anchor_or_place(&ctx, user.id);
 			self.profile.ingest_opener_rect(&ctx);
 			match profiles::show_with_session(
@@ -5290,8 +5305,15 @@ impl MessagingUi {
 						}
 					}
 				}
+				Some(profiles::Action::EditStatus) => self.open_custom_status_editor(),
+				Some(profiles::Action::ClearStatus) => self.clear_custom_status(),
 				Some(profiles::Action::Close) => {
 					self.profile.close_unless_armed(&ctx);
+				}
+				Some(profiles::Action::SaveBadges(settings)) => {
+					if let Some(command) = state.save_badge_settings(settings) {
+						commands.push(command);
+					}
 				}
 				Some(profiles::Action::Retry) => {
 					if let Some(command) = state.request_profile(user.id, profile_guild) {
@@ -5408,7 +5430,7 @@ mod composer_tests {
 	use client_core::MAX_CONTENT;
 
 	#[test]
-	fn composer_context_menu_pastes_through_the_clipboard_worker() {
+	fn composer_context_menu_saves_cuts_and_gates_clipboard_requests() {
 		let ctx = egui::Context::default();
 		let mut state = edit_state();
 		let mut view = MessagingUi::default();
@@ -5495,6 +5517,91 @@ mod composer_tests {
 			.expect("menu paste reads the system clipboard");
 		assert_eq!(request.target, composer);
 		assert!(request.text.is_none() && request.image.is_none());
+		for (editing, cut_all) in [(false, false), (false, true), (true, false)] {
+			state = edit_state();
+			view = MessagingUi::default();
+			state.drafts.insert(channel, "draft".into());
+			if editing {
+				view.editing = Some((Id(10), Id(20), "Original".into()));
+			}
+			for _ in 0..3 {
+				frame(&mut view, &mut state, vec![]);
+			}
+			let composer = ctx.memory(|memory| memory.focused()).unwrap();
+			let rect = ctx.read_response(composer).unwrap().rect;
+			let mut cursor = egui::TextEdit::load_state(&ctx, composer).unwrap();
+			cursor
+				.cursor
+				.set_char_range(Some(egui::text::CCursorRange::two(
+					egui::text::CCursor::new(0),
+					egui::text::CCursor::new(if cut_all { 5 } else { 2 }),
+				)));
+			cursor.store(&ctx, composer);
+			let mut open_menu = click(
+				rect.left_center() + egui::vec2(1.0, 0.0),
+				egui::PointerButton::Secondary,
+			);
+			if cut_all {
+				let release = open_menu.pop().unwrap();
+				frame(&mut view, &mut state, open_menu);
+				frame(&mut view, &mut state, vec![release]);
+			} else {
+				frame(&mut view, &mut state, open_menu);
+			}
+			frame(&mut view, &mut state, vec![]);
+			frame(&mut view, &mut state, vec![]);
+			let labels = frame(&mut view, &mut state, vec![]);
+			assert!(
+				!egui::TextEdit::load_state(&ctx, composer)
+					.unwrap()
+					.cursor
+					.char_range()
+					.unwrap()
+					.is_empty(),
+				"selection for cut: {editing}/{cut_all}"
+			);
+			let (_, cut) = labels.iter().find(|(text, _)| text == "Cut").unwrap();
+			view.draft_changes.clear();
+			frame(
+				&mut view,
+				&mut state,
+				click(cut.center(), egui::PointerButton::Primary),
+			);
+			if editing {
+				assert_eq!(view.editing.as_ref().unwrap().2, "iginal");
+				assert_eq!(view.edit_modified, Some((Id(10), Id(20), true)));
+				assert!(view.draft_changes.is_empty());
+				assert_eq!(state.drafts.get(&channel).unwrap(), "draft");
+				frame(&mut view, &mut state, vec![]);
+				frame(
+					&mut view,
+					&mut state,
+					click(rect.center(), egui::PointerButton::Secondary),
+				);
+				let labels = frame(&mut view, &mut state, vec![]);
+				let (_, paste) = labels.iter().find(|(text, _)| text == "Paste").unwrap();
+				frame(
+					&mut view,
+					&mut state,
+					click(paste.center(), egui::PointerButton::Primary),
+				);
+				frame(&mut view, &mut state, vec![]);
+				assert!(view.menu_paste.is_none());
+				assert!(view.attachment_paste_requested.is_none());
+			} else {
+				assert_eq!(
+					view.draft_changes,
+					[channel],
+					"cut={cut_all}, draft={:?}",
+					state.drafts
+				);
+				if cut_all {
+					assert!(!state.drafts.contains_key(&channel));
+				} else {
+					assert_eq!(state.drafts.get(&channel).unwrap(), "aft");
+				}
+			}
+		}
 	}
 
 	#[test]

@@ -624,7 +624,9 @@ impl ForumUi {
 							ui.vertical(|ui| {
 								ui.set_width(fields);
 								ui.spacing_mut().item_spacing.y = 4.0;
-								let title = ui.add(
+								let title_selection =
+									crate::text_menu::selection_for_menu(ui.ctx(), title_id());
+								let mut title = ui.add(
 									egui::TextEdit::singleline(&mut draft.title)
 										.id(title_id())
 										.align(egui::Align2::LEFT_CENTER)
@@ -645,7 +647,13 @@ impl ForumUi {
 										)
 										.desired_width(f32::INFINITY),
 								);
-								if crate::text_menu::show(&title, title_id(), &mut draft.title) {
+								if crate::text_menu::show(
+									&mut title,
+									title_id(),
+									&mut draft.title,
+									true,
+									title_selection,
+								) {
 									*paste = Some(title_id());
 								}
 								let title = title.accessible_name(crate::i18n::translate(
@@ -655,7 +663,9 @@ impl ForumUi {
 									title.request_focus();
 									draft.focus = false;
 								}
-								let body = ui.add(
+								let body_selection =
+									crate::text_menu::selection_for_menu(ui.ctx(), body_id());
+								let mut body = ui.add(
 									egui::TextEdit::multiline(&mut draft.body)
 										.id(body_id())
 										.char_limit(
@@ -672,7 +682,13 @@ impl ForumUi {
 										.desired_rows(3)
 										.desired_width(f32::INFINITY),
 								);
-								if crate::text_menu::show(&body, body_id(), &mut draft.body) {
+								if crate::text_menu::show(
+									&mut body,
+									body_id(),
+									&mut draft.body,
+									true,
+									body_selection,
+								) {
 									*paste = Some(body_id());
 								}
 								body.accessible_name(crate::i18n::translate(
@@ -842,7 +858,7 @@ fn media_box(
 		egui::WidgetInfo::labeled(
 			egui::Role::Button,
 			true,
-			crate::i18n::translate_args("forum-composer-attached-files", &[("count", &count)]),
+			crate::i18n::translate_count("forum-composer-attached-files", staged.files.len(), &[]),
 		)
 	});
 	if response.hovered() || response.has_focus() || response.clicked() {
@@ -855,7 +871,10 @@ fn media_box(
 	const PAD: f32 = 8.0;
 	let tiles = staged.files.len() + usize::from(enabled);
 	let width = tiles as f32 * THUMB + (tiles - 1) as f32 * GAP + 2.0 * PAD;
-	let shown = egui::Area::new(ui.scope_id().with("post-media-tray"))
+	let width = width.min(ui.ctx().viewport_rect().width() - 2.0 * PAD);
+	let mut tray_focused = false;
+	let tray_id = ui.scope_id().with("post-media-tray");
+	let shown = egui::Area::new(tray_id)
 		.order(egui::Order::Foreground)
 		.fixed_pos(rect.right_top() + egui::vec2(PAD - width, -PAD))
 		.show(ui.ctx(), |ui| {
@@ -866,7 +885,8 @@ fn media_box(
 				.inner_margin(PAD)
 				.shadow(ui.visuals().popup_shadow)
 				.show(ui, |ui| {
-					ui.horizontal(|ui| {
+					ui.set_width((width - 2.0 * PAD).max(THUMB));
+					ui.horizontal_wrapped(|ui| {
 						ui.spacing_mut().item_spacing.x = GAP;
 						for index in 0..staged.files.len() {
 							let (tile, hovered) = ui.allocate_exact_size(
@@ -880,13 +900,14 @@ fn media_box(
 							);
 							let button = ui.interact(
 								remove,
-								ui.scope_id().with(("remove", index)),
+								tray_id.with(("remove", index)),
 								if staged.busy {
 									egui::Sense::hover()
 								} else {
 									egui::Sense::click()
 								},
 							);
+							tray_focused |= button.has_focus();
 							if !staged.busy
 								&& (hovered.hovered() || button.hovered() || button.has_focus())
 							{
@@ -924,6 +945,7 @@ fn media_box(
 						}
 						if enabled {
 							let add = add_tile(ui, true);
+							tray_focused |= add.has_focus();
 							if add.clicked() {
 								*staged.choose = true;
 							}
@@ -932,11 +954,12 @@ fn media_box(
 					});
 				});
 		});
-	// The tray stays while the pointer is over it or the box, and closes once it leaves both.
+	// Keep keyboard controls alive even when the pointer is outside the tray.
 	let pointer = ui.ctx().pointer_hover_pos();
 	let kept = pointer.is_some_and(|pointer| {
 		shown.response.rect.expand(4.0).contains(pointer) || rect.contains(pointer)
-	}) || response.has_focus();
+	}) || response.has_focus()
+		|| tray_focused;
 	if !kept {
 		*open = false;
 	}
@@ -2426,5 +2449,118 @@ mod tests {
 		assert!(open);
 		media_frame(&ctx, Some(egui::pos2(5.0, 390.0)), false, &mut open);
 		assert!(!open, "leaving both closes the tray");
+	}
+
+	#[test]
+	fn post_media_tray_wraps_and_keeps_focused_controls_reachable() {
+		for width in [320.0, 760.0, 800.0] {
+			for count in [9, 10] {
+				let ctx = egui::Context::default();
+				let files = vec![("file.png".to_owned(), 10); count];
+				let textures = vec![None; count];
+				let mut open = true;
+				let mut tray_id = egui::Id::NULL;
+				let mut choose = false;
+				let mut frame = |events: Vec<egui::Event>, reopen: bool| {
+					if reopen {
+						open = true;
+					}
+					let (mut remove, mut clear) = (None, false);
+					let output = ctx.run_ui(
+						egui::RawInput {
+							screen_rect: Some(egui::Rect::from_min_size(
+								egui::Pos2::ZERO,
+								egui::vec2(width, 400.0),
+							)),
+							events,
+							focused: true,
+							..Default::default()
+						},
+						|ui| {
+							ui.add_space(100.0);
+							ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+								tray_id = ui.scope_id().with("post-media-tray");
+								media_box(
+									ui,
+									&mut Staged {
+										files: &files,
+										textures: &textures,
+										choose: &mut choose,
+										remove: &mut remove,
+										clear: &mut clear,
+										busy: false,
+									},
+									count < 10,
+									true,
+									&mut open,
+								);
+							});
+						},
+					);
+					output.drop_without_applying_deltas();
+					(remove, tray_id, open)
+				};
+				let (_, tray, _) = frame(vec![], true);
+				ctx.memory_mut(|memory| memory.request_focus(tray.with(("remove", 0))));
+				frame(vec![], true);
+				for index in 0..count {
+					let id = tray.with(("remove", index));
+					ctx.memory_mut(|memory| memory.request_focus(id));
+					assert!(
+						frame(vec![], false).2,
+						"focused remove {index} must keep the tray open"
+					);
+					let button = ctx.read_response(id).unwrap();
+					assert!(
+						ctx.viewport_rect().contains_rect(button.rect),
+						"{width}: {index}: {:?}",
+						button.rect
+					);
+					let pos = button.rect.center();
+					let events = vec![
+						egui::Event::PointerMoved(pos),
+						egui::Event::PointerButton {
+							pos,
+							button: egui::PointerButton::Primary,
+							pressed: true,
+							modifiers: Default::default(),
+						},
+						egui::Event::PointerButton {
+							pos,
+							button: egui::PointerButton::Primary,
+							pressed: false,
+							modifiers: Default::default(),
+						},
+					];
+					assert_eq!(frame(events, false).0, Some(index));
+					frame(vec![egui::Event::PointerGone], false);
+				}
+				if count == 9 {
+					assert!(
+						frame(
+							vec![egui::Event::Key {
+								key: egui::Key::Tab,
+								physical_key: None,
+								pressed: true,
+								repeat: false,
+								modifiers: Default::default(),
+							}],
+							false
+						)
+						.2
+					);
+					assert!(
+						frame(vec![], false).2,
+						"focused add must keep the tray open"
+					);
+					let id = ctx.memory(|memory| memory.focused()).unwrap();
+					assert_ne!(id, tray.with(("remove", count - 1)));
+					assert!(
+						ctx.viewport_rect()
+							.contains_rect(ctx.read_response(id).unwrap().rect)
+					);
+				}
+			}
+		}
 	}
 }
