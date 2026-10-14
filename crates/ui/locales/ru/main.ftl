@@ -4812,3 +4812,6 @@ time-format-12-hour = 12-часовой
 time-format-24-hour = 24-часовой
 profiles-status-edit = Изменить статус
 profiles-status-clear = Очистить статус
+send-throttled-title = Полегче, слишком остро
+send-throttled-body = Вы отправляете сообщения слишком быстро!
+send-throttled-dismiss = В зону спокойствия

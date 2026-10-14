@@ -4795,3 +4795,6 @@ time-format-12-hour = 12 saat
 time-format-24-hour = 24 saat
 profiles-status-edit = Durumu düzenle
 profiles-status-clear = Durumu temizle
+send-throttled-title = Yavaş, fazla acı
+send-throttled-body = Mesajları çok hızlı gönderiyorsun!
+send-throttled-dismiss = Sakinlik bölgesine gir

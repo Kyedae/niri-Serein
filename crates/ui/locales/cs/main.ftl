@@ -4895,3 +4895,6 @@ time-format-12-hour = 12hodinový
 time-format-24-hour = 24hodinový
 profiles-status-edit = Upravit stav
 profiles-status-clear = Vymazat stav
+send-throttled-title = Hola hola, moc pálivé
+send-throttled-body = Posíláte zprávy příliš rychle!
+send-throttled-dismiss = Vstoupit do zóny klidu

@@ -4809,3 +4809,6 @@ time-format-12-hour = 12-Stunden
 time-format-24-hour = 24-Stunden
 profiles-status-edit = Status bearbeiten
 profiles-status-clear = Status löschen
+send-throttled-title = Hoppla, viel zu scharf
+send-throttled-body = Du sendest Nachrichten zu schnell!
+send-throttled-dismiss = Ab in die Chill-Zone
