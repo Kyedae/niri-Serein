@@ -4735,3 +4735,6 @@ timeline-dm-intro = Это начало истории ваших личных �
 timeline-channel-intro-title = Добро пожаловать в #{ $channel }!
 # Context: timeline_channel_intro
 timeline-channel-intro-start = Это начало канала #{ $channel }.
+show-user-profile = Показать профиль пользователя
+hide-user-profile = Скрыть профиль пользователя
+view-full-profile = Открыть полный профиль

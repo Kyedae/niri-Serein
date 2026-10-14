@@ -4718,3 +4718,6 @@ timeline-dm-intro = { $name } ile doğrudan mesaj geçmişinin başlangıcı.
 timeline-channel-intro-title = #{ $channel } kanalına hoş geldin!
 # Context: timeline_channel_intro
 timeline-channel-intro-start = #{ $channel } kanalının başlangıcı.
+show-user-profile = Kullanıcı profilini göster
+hide-user-profile = Kullanıcı profilini gizle
+view-full-profile = Tam profili görüntüle

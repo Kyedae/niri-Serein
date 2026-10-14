@@ -4828,3 +4828,6 @@ timeline-dm-intro = 這是你與 { $name } 的私訊紀錄的開頭。
 timeline-channel-intro-title = 歡迎來到 #{ $channel }！
 # Context: timeline_channel_intro
 timeline-channel-intro-start = 這是 #{ $channel } 頻道的開頭。
+show-user-profile = 顯示使用者個人資料
+hide-user-profile = 隱藏使用者個人資料
+view-full-profile = 檢視完整個人資料
