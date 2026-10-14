@@ -22,6 +22,7 @@ pub fn set_format(format: model::TimeFormat, language: crate::i18n::Language) {
 
 /// Locales whose convention is a 12-hour clock with AM/PM.
 fn twelve_hour_locale(tag: &str) -> bool {
+	let tag = tag.split(['.', '@']).next().unwrap_or_default();
 	let tag = tag.replace('_', "-");
 	let mut parts = tag.split('-');
 	let language = parts.next().unwrap_or_default().to_ascii_lowercase();
@@ -184,7 +185,15 @@ mod tests {
 		for tag in ["en-US", "en_US.UTF-8", "en", "en-CA", "en-AU"] {
 			assert!(super::twelve_hour_locale(tag), "{tag}");
 		}
-		for tag in ["en-GB", "de-DE", "fr", "ja-JP", "cs_CZ"] {
+		for tag in [
+			"en-GB",
+			"en_GB.UTF-8",
+			"en_GB@euro",
+			"de-DE",
+			"fr",
+			"ja-JP",
+			"cs_CZ",
+		] {
 			assert!(!super::twelve_hour_locale(tag), "{tag}");
 		}
 	}
