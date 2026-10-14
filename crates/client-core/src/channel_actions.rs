@@ -332,7 +332,11 @@ impl State {
 				.or_else(|| {
 					self.channel_actions
 						.post_owner
-						.filter(|(id, _)| *id == channel && self.is_thread_channel(channel))
+						.filter(|(id, _)| {
+							*id == channel
+								&& self.is_thread_channel(channel)
+								&& self.can_view(channel)
+						})
 						.map(|(_, owner)| owner)
 				})
 				.is_some_and(|owner| self.user.as_ref().is_some_and(|u| u.id == owner))
@@ -752,13 +756,6 @@ impl State {
 		}
 		if let Some((guild, channel, _, action, changed)) = &mut self.channel_actions.pending {
 			*changed |= match event {
-				// The gateway echoes this client's own rename back, often before the response.
-				crate::Event::ChannelChanged(p) | crate::Event::ThreadChanged { patch: p, .. }
-					if p.id == *channel
-						&& matches!((&*action, &p.name), (Action::PostRename(name), Patch::Value(echo)) if name == echo) =>
-				{
-					false
-				}
 				crate::Event::ChannelChanged(p) | crate::Event::ThreadChanged { patch: p, .. } => {
 					p.id == *channel && !matches!(action, Action::Delete)
 				}
@@ -906,7 +903,17 @@ impl State {
 				channel: updated,
 				details,
 			}) => {
-				if self.is_thread_channel(channel) && self.can_view(channel) && !observed {
+				if observed
+					&& matches!(action, Action::PostRename(_))
+					&& self.is_thread_channel(channel)
+					&& self.can_view(channel)
+					&& self
+						.channel(channel)
+						.is_some_and(|c| c.name == updated.name)
+				{
+					// The name confirms the rename, but a same-name update can change other details.
+					self.channel_actions.post = None;
+				} else if self.is_thread_channel(channel) && self.can_view(channel) && !observed {
 					if self
 						.channel(channel)
 						.is_some_and(|c| c.name != updated.name)
@@ -1394,9 +1401,7 @@ mod tests {
 		}
 	}
 
-	/// Discord echoes this client's own rename as a thread update, often before the response.
-	#[test]
-	fn renaming_a_post_survives_the_echo_of_its_own_rename() {
+	fn owned_post() -> (State, model::Channel, PostDetails) {
 		let mut state = state();
 		let thread = model::Channel {
 			id: Id(4),
@@ -1448,6 +1453,39 @@ mod tests {
 		state.permissions.clear_cache();
 		assert!(!state.can_manage_post(Id(4)));
 		assert!(state.can_edit_post(Id(4)));
+		(state, thread, details)
+	}
+
+	#[test]
+	fn post_ownership_requires_current_view_access() {
+		let (mut state, _, _) = owned_post();
+		state.apply(Envelope {
+			generation: state.generation,
+			event: CoreEvent::Permissions(crate::permissions::Event::Channel {
+				channel: Id(3),
+				guild: Some(Id(2)),
+				overwrites: Patch::Value(vec![model::permissions::Overwrite {
+					id: Id(2),
+					kind: 0,
+					allow: 0,
+					deny: VIEW_CHANNEL,
+				}]),
+			}),
+		});
+		assert!(!state.can_view(Id(4)));
+		assert!(state.post_details(Id(4)).is_none());
+		assert!(!state.can_edit_post(Id(4)));
+		assert!(
+			state
+				.request_channel_action(Id(4), Action::PostRename("Renamed".into()))
+				.is_none()
+		);
+	}
+
+	/// Discord echoes this client's own rename as a thread update, often before the response.
+	#[test]
+	fn renaming_a_post_survives_the_echo_of_its_own_rename() {
+		let (mut state, thread, details) = owned_post();
 		let renamed = "FIXED Videos higher than 1080p?";
 		let rename = state
 			.request_channel_action(Id(4), Action::PostRename(renamed.into()))
@@ -1487,6 +1525,59 @@ mod tests {
 			state.channel_action_status(Id(4))
 		);
 		assert_eq!(state.channel(Id(4)).unwrap().name, renamed);
+		// A same-name update can also carry a newer lock/archive state from another client.
+		assert!(state.post_details(Id(4)).is_none());
+		assert!(state.can_edit_post(Id(4)));
+		let load = state
+			.request_channel_action(Id(4), Action::PostLoad)
+			.unwrap();
+		let updated = state.channel(Id(4)).unwrap().clone();
+		finish(
+			&mut state,
+			load,
+			Ok(Outcome::Post {
+				channel: Box::new(updated),
+				details: PostDetails {
+					locked: true,
+					..details
+				},
+			}),
+		);
+		assert!(state.post_details(Id(4)).unwrap().locked);
+	}
+
+	#[test]
+	fn renaming_a_post_preserves_a_later_name() {
+		let (mut state, mut thread, details) = owned_post();
+		let rename = state
+			.request_channel_action(Id(4), Action::PostRename("Requested".into()))
+			.unwrap();
+		state.apply(Envelope {
+			generation: state.generation,
+			event: CoreEvent::ChannelChanged(model::ChannelPatch {
+				id: Id(4),
+				name: Patch::Value("Later edit".into()),
+				icon: Patch::Absent,
+				last_message: Patch::Absent,
+				parent_id: Patch::Absent,
+				position: Patch::Absent,
+				kind: Patch::Absent,
+				message_count: Patch::Absent,
+				tags: Patch::Absent,
+			}),
+		});
+		thread.name = "Requested".into();
+		finish(
+			&mut state,
+			rename,
+			Ok(Outcome::Post {
+				channel: Box::new(thread),
+				details,
+			}),
+		);
+		assert!(!state.channel_action_succeeded(Id(4)));
+		assert_eq!(state.channel(Id(4)).unwrap().name, "Later edit");
+		assert!(state.post_details(Id(4)).is_none());
 	}
 
 	#[test]
