@@ -1138,20 +1138,11 @@ impl Theme {
 	pub(crate) fn new(colors: &design::Palette, theme: Option<[u32; 2]>) -> Self {
 		match theme {
 			Some([top, bottom]) => {
-				let (top, bottom) = (rgb(top), rgb(bottom));
-				// The body panel is opaque enough that its tint decides contrast: white over a
-				// bright gradient takes dark text, black over a dark one takes light text.
-				let bright = (luma(top) + luma(bottom)) * 0.5 > 0.5;
-				// Light themes use a softer outer gradient so the body does not read as a
-				// separate pale rectangle inside a fully saturated frame.
-				let (top, bottom) = if bright {
-					(
-						top.lerp_to_gamma(Color32::WHITE, 0.3),
-						bottom.lerp_to_gamma(Color32::WHITE, 0.3),
-					)
-				} else {
-					(top, bottom)
-				};
+				let bright = Self::bright([top, bottom]);
+				let (top, bottom) = (
+					Self::overlaid(rgb(top), bright),
+					Self::overlaid(rgb(bottom), bright),
+				);
 				Self {
 					gradient: Some((top, bottom)),
 					text: if bright {
@@ -1169,10 +1160,12 @@ impl Theme {
 					} else {
 						Color32::from_rgb(0, 176, 244)
 					},
+					// The overlaid gradient already carries the contrast; the body only
+					// separates itself slightly, as Discord's sections do.
 					panel: if bright {
-						Color32::from_white_alpha(96)
+						Color32::from_white_alpha(40)
 					} else {
-						Color32::from_black_alpha(130)
+						Color32::from_black_alpha(48)
 					},
 					chip: if bright {
 						Color32::from_black_alpha(18)
@@ -1210,6 +1203,26 @@ impl Theme {
 				card: colors.surface,
 			},
 		}
+	}
+	/// White over a bright theme takes dark text, black over a dark one takes light text.
+	fn bright([top, bottom]: [u32; 2]) -> bool {
+		(luma(rgb(top)) + luma(rgb(bottom))) * 0.5 > 0.5
+	}
+	/// Discord lays a 60% overlay over both theme colors, black for dark themes and white for
+	/// light ones, so a profile reads as a tinted card rather than the raw picked colors.
+	fn overlaid(color: Color32, bright: bool) -> Color32 {
+		color.lerp_to_gamma(
+			if bright {
+				Color32::WHITE
+			} else {
+				Color32::BLACK
+			},
+			0.6,
+		)
+	}
+	/// The banner of a themed profile without banner art: its overlaid top color.
+	pub(crate) fn banner(theme: [u32; 2]) -> Color32 {
+		Self::overlaid(rgb(theme[0]), Self::bright(theme))
 	}
 	pub(crate) fn background(&self, rect: Rect) -> egui::Shape {
 		let radius = f32::from(RADIUS);
@@ -3988,9 +4001,15 @@ mod tests {
 				);
 			}
 		}
-		let dark = Theme::new(&palette, Some([0x1f3a4d, 0x3b2a5e]));
-		assert_eq!(dark.gradient, Some((rgb(0x1f3a4d), rgb(0x3b2a5e))));
-		assert_eq!(dark.panel, Color32::from_black_alpha(130));
+		// Dark themes take Discord's 60% black overlay: #515153 → #373738 reads near #202021.
+		let dark = Theme::new(&palette, Some([0x515153, 0x373738]));
+		let (top, bottom) = dark.gradient.unwrap();
+		for (color, raw) in [(top, 0x51u8), (bottom, 0x37)] {
+			let expected = (f32::from(raw) * 0.4).round();
+			assert!((f32::from(color.r()) - expected).abs() <= 2.0, "{color:?}");
+		}
+		assert_eq!(Theme::banner([0x515153, 0x373738]), top);
+		assert_eq!(dark.panel, Color32::from_black_alpha(48));
 		assert!(Theme::new(&palette, None).gradient.is_none());
 	}
 
