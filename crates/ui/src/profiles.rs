@@ -67,7 +67,7 @@ pub(crate) fn user_in_voice(state: &State, user: Id) -> bool {
 
 /// The custom status as Discord's thought bubble: a small dot off the avatar, then a rounded
 /// bubble of at most three lines, always below the banner. On the account's own card, hovering
-/// it offers edit and clear. Returns where it was painted and any action picked.
+/// it or focusing its controls offers edit and clear. Returns its bounds and any action picked.
 fn status_bubble(
 	ui: &egui::Ui,
 	avatar: Rect,
@@ -105,9 +105,9 @@ fn status_bubble(
 	painter.rect(bubble, 14, fill, stroke, egui::StrokeKind::Inside);
 	painter.galley(bubble.min + vec2(14.0, 10.0), galley, theme.text);
 	let id = egui::Id::unique(("profile-status-bubble", full));
-	let hovered = ui.interact(bubble, id, egui::Sense::hover());
+	ui.interact(bubble, id, egui::Sense::hover())
+		.on_hover_text(text);
 	if !own {
-		hovered.on_hover_text(text);
 		return Some((bubble, None));
 	}
 	// Discord's tools ride the bubble's top-right corner: pencil, then trash.
@@ -121,32 +121,43 @@ fn status_bubble(
 	);
 	let pointer = ui.ctx().pointer_hover_pos();
 	let near = pointer.is_some_and(|pos| bubble.contains(pos) || tools.expand(2.0).contains(pos));
-	let mut picked = None;
-	if near {
+	let controls = [
+		(Icon::Pencil, "profiles-status-edit", Action::EditStatus),
+		(Icon::Trash, "profiles-status-clear", Action::ClearStatus),
+	];
+	let responses: [_; 2] = std::array::from_fn(|index| {
+		let rect = Rect::from_min_size(
+			tools.min + vec2(3.0 + index as f32 * TOOL, 0.0),
+			Vec2::splat(TOOL),
+		);
+		ui.interact(rect, id.with(("tool", index)), egui::Sense::click())
+	});
+	let visible = near || responses.iter().any(egui::Response::has_focus);
+	if visible {
 		painter.rect(tools, 8, fill, stroke, egui::StrokeKind::Inside);
-		for (index, (icon, label, action)) in [
-			(Icon::Pencil, "profiles-status-edit", Action::EditStatus),
-			(Icon::Trash, "profiles-status-clear", Action::ClearStatus),
-		]
-		.into_iter()
-		.enumerate()
-		{
-			let rect = Rect::from_min_size(
-				tools.min + vec2(3.0 + index as f32 * TOOL, 0.0),
-				Vec2::splat(TOOL),
-			);
-			let response = ui.interact(rect, id.with(index), egui::Sense::click());
-			let color = if response.hovered() {
+	}
+	let mut picked = None;
+	for ((icon, label, action), response) in controls.into_iter().zip(responses) {
+		if visible {
+			let color = if response.hovered() || response.has_focus() {
 				theme.text
 			} else {
 				theme.muted
 			};
-			icons::paint(painter, icon, rect.shrink(6.0), color);
-			let label = crate::i18n::translate(label);
-			response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
-			if response.on_hover_text(label).clicked() {
-				picked = Some(action);
+			icons::paint(painter, icon, response.rect.shrink(6.0), color);
+			if response.has_focus() {
+				painter.rect_stroke(
+					response.rect.shrink(2.0),
+					4,
+					Stroke::new(1.0, theme.text),
+					egui::StrokeKind::Inside,
+				);
 			}
+		}
+		let label = crate::i18n::translate(label);
+		response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
+		if response.on_hover_text(label).clicked() {
+			picked = Some(action);
 		}
 	}
 	Some((bubble, picked))
@@ -3046,12 +3057,13 @@ pub fn show_with_session(
 		}
 		// Discord shows the custom status as a thought bubble beside the avatar.
 		let own = state.user.as_ref().is_some_and(|own| own.id == user.id);
-		let thought: Option<String> = custom
-			.filter(|text| !text.trim().is_empty())
-			.map(str::to_owned)
-			.or_else(|| {
-				(own && !session.own_status.trim().is_empty()).then(|| session.own_status.clone())
-			});
+		let thought = if own {
+			(!session.own_status.trim().is_empty()).then(|| session.own_status.clone())
+		} else {
+			custom
+				.filter(|text| !text.trim().is_empty())
+				.map(str::to_owned)
+		};
 		let mut header_bottom = avatar_rect.bottom();
 		if let Some(text) = thought.as_deref()
 			&& let Some((bubble, picked)) =
@@ -4973,63 +4985,217 @@ mod tests {
 
 	#[test]
 	fn own_card_shows_the_account_custom_status_as_a_bubble() {
-		let ctx = egui::Context::default();
-		let state = test_support::demo_state();
-		let user = state.user.clone().unwrap();
-		let view = ProfileView {
-			user: user.id,
-			guild: None,
-			request: 0,
-			loading: false,
-			error: None,
-			data: Some(synthetic(&user, None)),
-		};
-		let mut session = ProfileSession {
-			own_status: "thank you for being my mirror".into(),
-			..Default::default()
-		};
-		let mut painted = Vec::new();
-		for _ in 0..2 {
-			let output = ctx.run_ui(
-				egui::RawInput {
-					screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))),
+		for full in [false, true] {
+			for (own, live, cached, expected) in [
+				(
+					true,
+					"Live account status",
+					Some("Old guild status"),
+					Some("Live account status"),
+				),
+				(true, "", Some("Old guild status"), None),
+				(true, " \t ", Some("Old guild status"), None),
+				(
+					true,
+					"Live account status",
+					None,
+					Some("Live account status"),
+				),
+				(
+					false,
+					"Unrelated account status",
+					Some("Remote user status"),
+					Some("Remote user status"),
+				),
+			] {
+				let ctx = egui::Context::default();
+				let mut state = test_support::demo_state();
+				let account = state.user.clone().unwrap();
+				let user = if own {
+					account
+				} else {
+					test_support::message(1, Id(22)).author
+				};
+				state.selected = Some(Id(20));
+				state.members = Some(model::MemberList {
+					guild: Some(Id(10)),
+					channel: Id(20),
+					request: 1,
+					total: 1,
+					lazy: false,
+					groups: vec![],
+					ranges: vec![],
+					freshness: model::Freshness::Fresh,
+					start: 0,
+					slots: vec![Some(model::MemberSlot::Person(model::Member {
+						roles: vec![],
+						user: user.clone(),
+						nick: None,
+						status: Some("online".into()),
+						custom_status: cached.map(str::to_owned),
+						activities: vec![],
+						clients: model::ClientPlatforms::default(),
+					}))],
+				});
+				let view = ProfileView {
+					user: user.id,
+					guild: Some(Id(10)),
+					request: 0,
+					loading: false,
+					error: None,
+					data: Some(synthetic(&user, None)),
+				};
+				let mut session = ProfileSession {
+					own_status: live.into(),
+					full,
 					..Default::default()
-				},
-				|ui| {
-					show_with_session(
-						ui,
-						&user,
-						Some(&view),
-						&state,
-						&mut Avatars::default(),
-						&mut None,
-						&mut FormatCache::default(),
-						false,
-						pos2(300.0, 100.0),
-						&mut session,
+				};
+				let mut painted = String::new();
+				for _ in 0..2 {
+					let output = ctx.run_ui(
+						egui::RawInput {
+							screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))),
+							..Default::default()
+						},
+						|ui| {
+							show_with_session(
+								ui,
+								&user,
+								Some(&view),
+								&state,
+								&mut Avatars::default(),
+								&mut None,
+								&mut FormatCache::default(),
+								false,
+								pos2(300.0, 100.0),
+								&mut session,
+							);
+						},
 					);
-				},
-			);
-			painted.clear();
-			fn walk(shape: &egui::Shape, out: &mut Vec<String>) {
-				match shape {
-					egui::Shape::Text(text) => out.push(text.galley.job.text.clone()),
-					egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| walk(shape, out)),
-					_ => {}
+					painted.clear();
+					output
+						.shapes
+						.iter()
+						.for_each(|shape| text(&shape.shape, &mut painted));
+					output.drop_without_applying_deltas();
+				}
+				if let Some(expected) = expected {
+					assert!(painted.contains(expected), "{painted:?}");
+				}
+				if let Some(cached) = cached.filter(|cached| Some(*cached) != expected) {
+					assert!(!painted.contains(cached), "{painted:?}");
 				}
 			}
-			output
-				.shapes
-				.iter()
-				.for_each(|shape| walk(&shape.shape, &mut painted));
-			output.drop_without_applying_deltas();
 		}
-		assert!(
-			painted
-				.iter()
-				.any(|text| text == "thank you for being my mirror"),
-			"{painted:?}"
-		);
+	}
+
+	#[test]
+	fn own_status_bubble_buttons_support_tab_enter_and_space_without_pointer() {
+		for full in [false, true] {
+			let ctx = egui::Context::default();
+			let id = egui::Id::unique(("profile-status-bubble", full));
+			let frame = |events| {
+				let mut picked = None;
+				let output = ctx.run_ui(input(vec2(600.0, 400.0), events), |ui| {
+					let theme = Theme::new(&design::palette(ui), None);
+					picked = status_bubble(
+						ui,
+						Rect::from_min_size(pos2(10.0, 50.0), Vec2::splat(80.0)),
+						Rect::from_min_size(pos2(10.0, 10.0), vec2(400.0, 100.0)),
+						&theme,
+						"Synthetic account status",
+						(full, true),
+					)
+					.unwrap()
+					.1;
+				});
+				output.drop_without_applying_deltas();
+				picked
+			};
+			frame(vec![]);
+			frame(vec![]);
+			let key = |key| {
+				[true, false]
+					.map(|pressed| egui::Event::Key {
+						key,
+						physical_key: None,
+						pressed,
+						repeat: false,
+						modifiers: egui::Modifiers::NONE,
+					})
+					.to_vec()
+			};
+			assert!(frame(key(egui::Key::Tab)).is_none());
+			assert_eq!(
+				ctx.memory(|memory| memory.focused()),
+				Some(id.with(("tool", 0usize)))
+			);
+			assert!(matches!(
+				frame(key(egui::Key::Enter)),
+				Some(Action::EditStatus)
+			));
+			assert!(frame(key(egui::Key::Tab)).is_none());
+			assert_eq!(
+				ctx.memory(|memory| memory.focused()),
+				Some(id.with(("tool", 1usize)))
+			);
+			assert!(matches!(
+				frame(key(egui::Key::Space)),
+				Some(Action::ClearStatus)
+			));
+		}
+	}
+
+	#[test]
+	fn elided_status_bubble_shows_full_hover_text_for_owner_and_other_users() {
+		const STATUS: &str = "A long synthetic status that wraps beyond three lines and ends with a visible tooltip marker.";
+		for own in [false, true] {
+			let ctx = egui::Context::default();
+			ctx.style_mut_of(ctx.theme(), |style| style.interaction.tooltip_delay = 0.0);
+			let mut bubble = Rect::NOTHING;
+			let mut full_tooltip = false;
+			for frame in 0..5 {
+				let events = if frame >= 2 {
+					vec![egui::Event::PointerMoved(bubble.center())]
+				} else {
+					vec![]
+				};
+				let mut raw = input(vec2(600.0, 400.0), events);
+				raw.time = Some(frame as f64);
+				let output = ctx.run_ui(raw, |ui| {
+					let theme = Theme::new(&design::palette(ui), None);
+					bubble = status_bubble(
+						ui,
+						Rect::from_min_size(pos2(10.0, 50.0), Vec2::splat(80.0)),
+						Rect::from_min_size(pos2(10.0, 10.0), vec2(340.0, 100.0)),
+						&theme,
+						STATUS,
+						(false, own),
+					)
+					.unwrap()
+					.0;
+				});
+				fn has_full_text(shape: &egui::Shape) -> bool {
+					match shape {
+						egui::Shape::Text(text) => {
+							text.galley.job.text == STATUS && !text.galley.elided
+						}
+						egui::Shape::Vec(shapes) => shapes.iter().any(has_full_text),
+						_ => false,
+					}
+				}
+				let shown = output
+					.shapes
+					.iter()
+					.any(|shape| has_full_text(&shape.shape));
+				if frame < 2 {
+					assert!(!shown, "bubble must elide this status");
+				}
+				full_tooltip |= shown;
+				output.drop_without_applying_deltas();
+			}
+			assert!(full_tooltip, "full hover text missing for own={own}");
+		}
 	}
 
 	#[test]
