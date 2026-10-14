@@ -9,6 +9,7 @@ pub(super) struct Settings {
 	pub open: bool,
 	page: Page,
 	query: String,
+	language_time_format: Option<(model::TimeFormat, Language)>,
 	pub(super) editor: crate::profile_edit::Editor,
 	pub(super) notifications: crate::notification_settings::Navigation,
 	pub(super) messaging_permissions: crate::messaging_permissions::Navigation,
@@ -846,7 +847,11 @@ impl MessagingUi {
 				}
 			}
 		});
-		crate::local_time::set_format(self.time_format, self.language);
+		let format = (self.time_format, self.language);
+		if self.settings.language_time_format != Some(format) {
+			crate::local_time::set_format(self.time_format, self.language);
+			self.settings.language_time_format = Some(format);
+		}
 	}
 
 	fn general_settings(&mut self, ui: &mut egui::Ui, _demo: bool) {

@@ -4735,3 +4735,5 @@ time-format-group = Formato ora
 time-format-auto = Automatico
 time-format-12-hour = 12 ore
 time-format-24-hour = 24 ore
+profiles-status-edit = Modifica stato
+profiles-status-clear = Cancella stato
