@@ -277,6 +277,9 @@ pub struct Actions {
 	pending: Option<(Id, Id, u64, Action, bool)>,
 	details: Option<(Id, Edit)>,
 	post: Option<(Id, PostDetails)>,
+	/// The loaded post's owner. A thread's owner never changes, so this survives the live
+	/// updates that invalidate the rest of the details, including the echo of a rename.
+	post_owner: Option<(Id, Id)>,
 	status: Option<(Id, &'static str, bool)>,
 	reference_names: Vec<(Id, Box<str>)>,
 }
@@ -325,7 +328,14 @@ impl State {
 		self.can_manage_post(channel)
 			|| self
 				.post_details(channel)
-				.is_some_and(|p| p.owner.is_some() && p.owner == self.user.as_ref().map(|u| u.id))
+				.and_then(|p| p.owner)
+				.or_else(|| {
+					self.channel_actions
+						.post_owner
+						.filter(|(id, _)| *id == channel && self.is_thread_channel(channel))
+						.map(|(_, owner)| owner)
+				})
+				.is_some_and(|owner| self.user.as_ref().is_some_and(|u| u.id == owner))
 	}
 	/// Whether a thread may be started in `channel`; the service stays authoritative.
 	pub fn can_create_thread(&self, channel: Id) -> bool {
@@ -742,6 +752,13 @@ impl State {
 		}
 		if let Some((guild, channel, _, action, changed)) = &mut self.channel_actions.pending {
 			*changed |= match event {
+				// The gateway echoes this client's own rename back, often before the response.
+				crate::Event::ChannelChanged(p) | crate::Event::ThreadChanged { patch: p, .. }
+					if p.id == *channel
+						&& matches!((&*action, &p.name), (Action::PostRename(name), Patch::Value(echo)) if name == echo) =>
+				{
+					false
+				}
 				crate::Event::ChannelChanged(p) | crate::Event::ThreadChanged { patch: p, .. } => {
 					p.id == *channel && !matches!(action, Action::Delete)
 				}
@@ -950,6 +967,7 @@ impl State {
 						self.status = status;
 						return Ok(());
 					}
+					self.channel_actions.post_owner = details.owner.map(|owner| (channel, owner));
 					self.channel_actions.post = Some((channel, details));
 				} else {
 					self.channel_actions.status =
@@ -1374,6 +1392,101 @@ mod tests {
 			invalid.overwrites.push(invalid.overwrites[0]);
 			assert!(!invalid.valid());
 		}
+	}
+
+	/// Discord echoes this client's own rename as a thread update, often before the response.
+	#[test]
+	fn renaming_a_post_survives_the_echo_of_its_own_rename() {
+		let mut state = state();
+		let thread = model::Channel {
+			id: Id(4),
+			guild: Some(Id(2)),
+			parent_id: Some(Id(3)),
+			kind: 11,
+			name: "Videos higher than 1080p?".into(),
+			position: 0,
+			recipients: vec![],
+			last_message: None,
+			icon: None,
+			member_list_id: None,
+			tags: None,
+			message_count: None,
+		};
+		state.channels.push(thread.clone());
+		let details = PostDetails {
+			owner: Some(Id(1)),
+			..PostDetails::default()
+		};
+		let load = state
+			.request_channel_action(Id(4), Action::PostLoad)
+			.unwrap();
+		finish(
+			&mut state,
+			load,
+			Ok(Outcome::Post {
+				channel: Box::new(thread.clone()),
+				details,
+			}),
+		);
+		// A post owner without Manage Threads may still rename their own post.
+		let guild = state.permissions.guilds.get_mut(&Id(2)).unwrap();
+		guild.owner = Some(Id(99));
+		guild.roles = Some(vec![model::permissions::Role {
+			id: Id(2),
+			name: String::new(),
+			color: 0,
+			secondary_color: None,
+			tertiary_color: None,
+			position: 0,
+			hoist: false,
+			bits: VIEW_CHANNEL,
+		}]);
+		guild.member = Some(model::permissions::Member {
+			roles: vec![],
+			timeout_until: None,
+		});
+		state.permissions.clear_cache();
+		assert!(!state.can_manage_post(Id(4)));
+		assert!(state.can_edit_post(Id(4)));
+		let renamed = "FIXED Videos higher than 1080p?";
+		let rename = state
+			.request_channel_action(Id(4), Action::PostRename(renamed.into()))
+			.unwrap();
+		state.apply(Envelope {
+			generation: state.generation,
+			event: CoreEvent::ThreadChanged {
+				guild: Id(2),
+				patch: model::ChannelPatch {
+					id: Id(4),
+					name: Patch::Value(renamed.into()),
+					icon: Patch::Absent,
+					last_message: Patch::Absent,
+					parent_id: Patch::Value(Id(3)),
+					position: Patch::Absent,
+					kind: Patch::Value(11),
+					message_count: Patch::Absent,
+					tags: Patch::Absent,
+				},
+			},
+		});
+		// The update dropped the loaded details, but the owner may still edit their post.
+		assert!(state.can_edit_post(Id(4)));
+		let mut updated = thread;
+		updated.name = renamed.into();
+		finish(
+			&mut state,
+			rename,
+			Ok(Outcome::Post {
+				channel: Box::new(updated),
+				details,
+			}),
+		);
+		assert!(
+			state.channel_action_succeeded(Id(4)),
+			"{:?}",
+			state.channel_action_status(Id(4))
+		);
+		assert_eq!(state.channel(Id(4)).unwrap().name, renamed);
 	}
 
 	#[test]
