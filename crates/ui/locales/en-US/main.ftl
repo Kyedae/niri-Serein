@@ -4819,3 +4819,5 @@ time-format-group = Time format
 time-format-auto = Auto
 time-format-12-hour = 12-hour
 time-format-24-hour = 24-hour
+profiles-status-edit = Edit status
+profiles-status-clear = Clear status
