@@ -62,6 +62,39 @@ fn link(
 		}
 	}
 }
+
+/// A source action is needed only when the card and message have no existing source link.
+fn source_fallback(
+	message: &Message,
+	embed: &Embed,
+	cache: &mut FormatCache,
+	message_links_shown: bool,
+) -> Option<String> {
+	let inline = inline_image(embed).is_some();
+	if (!inline
+		&& embed
+			.title
+			.as_deref()
+			.is_some_and(|title| !title.is_empty()))
+		|| embed.video.is_some()
+		|| matches!(embed.kind.as_str(), "video" | "gifv")
+	{
+		return None;
+	}
+	let url = embed.url.as_deref().and_then(external_url)?;
+	if (message_links_shown && cache.get(message.id, &message.content).links.contains(&url))
+		|| (!inline
+			&& [&embed.author, &embed.provider]
+				.into_iter()
+				.flatten()
+				.any(|author| {
+					!author.name.is_empty()
+						&& author.url.as_deref().and_then(external_url).as_ref() == Some(&url)
+				})) {
+		return None;
+	}
+	Some(url)
+}
 #[allow(clippy::too_many_arguments)]
 fn text(
 	ui: &mut egui::Ui,
@@ -489,6 +522,7 @@ pub fn show(
 	profile: &mut crate::profiles::ProfileSession,
 	state: &client_core::State,
 	card_surface: crate::design::MessageCardSurface,
+	hide_media_links: bool,
 ) -> Option<Gif> {
 	if message.embeds_suppressed {
 		return None;
@@ -509,9 +543,24 @@ pub fn show(
 			index += count;
 			continue;
 		}
+		let source_url = source_fallback(
+			message,
+			embed,
+			cache,
+			!hide_media_links || !standalone_media_links(message),
+		);
 		ui.push_id(("embed", index), |ui| {
 			if count > 1 && inline_image(embed).is_some() {
 				gallery(ui, group, images, message.id, download, demo);
+				if let Some(url) = &source_url {
+					link(
+						ui,
+						&crate::i18n::translate("embeds-link-open-link"),
+						Some(url),
+						opening,
+						false,
+					);
+				}
 				if group.iter().any(|e| e.limited) {
 					ui.small(crate::i18n::translate("embeds-show-embed-display-limited"));
 				}
@@ -557,6 +606,15 @@ pub fn show(
 						.clicked()
 				{
 					download.view_embed(message.id, image);
+				}
+				if let Some(url) = &source_url {
+					link(
+						ui,
+						&crate::i18n::translate("embeds-link-open-link"),
+						Some(url),
+						opening,
+						false,
+					);
 				}
 				ui.add_space(6.0);
 				return;
@@ -775,14 +833,46 @@ pub fn show(
 										(None, Some(when)) => when.to_owned(),
 										(None, None) => String::new(),
 									};
-									ui.add(
-										egui::Label::new(
-											RichText::new(line).size(12.0).color(colors.muted),
-										)
-										.wrap()
-										.selectable(true),
+									let mut text =
+										RichText::new(line).size(12.0).color(colors.muted);
+									if source_url.is_some() {
+										text = text.underline();
+									}
+									let response = ui.add(
+										egui::Label::new(text)
+											.wrap()
+											.selectable(source_url.is_none())
+											.sense(if source_url.is_some() {
+												egui::Sense::click()
+											} else {
+												egui::Sense::hover()
+											}),
 									);
+									if let Some(url) = &source_url {
+										response.widget_info(|| {
+											egui::WidgetInfo::labeled(
+												egui::Role::Link,
+												ui.is_enabled(),
+												url,
+											)
+										});
+										if response
+											.on_hover_text(url)
+											.on_hover_cursor(egui::CursorIcon::PointingHand)
+											.clicked()
+										{
+											*opening = Some(url.clone());
+										}
+									}
 								});
+							} else if let Some(url) = &source_url {
+								link(
+									ui,
+									&crate::i18n::translate("embeds-link-open-link"),
+									Some(url),
+									opening,
+									false,
+								);
 							}
 							if group.iter().any(|e| e.limited) {
 								ui.small(crate::i18n::translate(
@@ -828,7 +918,12 @@ pub fn estimated_height(embeds: &[Embed]) -> f32 {
 		height += if e.kind == "poll_result" {
 			72.0
 		} else if inline_image(e).is_some() {
-			if count > 1 { image_height + 6.0 } else { 206.0 }
+			let source = if e.kind == "image" && e.url.is_some() {
+				20.0
+			} else {
+				0.0
+			};
+			(if count > 1 { image_height + 6.0 } else { 206.0 }) + source
 		} else {
 			let mut lines = 0.0;
 			if e.provider
@@ -853,6 +948,10 @@ pub fn estimated_height(embeds: &[Embed]) -> f32 {
 				.as_ref()
 				.is_some_and(|footer| !footer.text.is_empty())
 				|| e.timestamp.is_some()
+				|| (e.url.is_some()
+					&& e.title.as_deref().is_none_or(str::is_empty)
+					&& e.video.is_none()
+					&& !matches!(e.kind.as_str(), "video" | "gifv"))
 			{
 				lines += 1.0;
 			}
@@ -877,9 +976,168 @@ mod tests {
 	use super::*;
 
 	#[test]
+	fn source_fallback_requires_a_safe_url_without_an_existing_source_action() {
+		let mut message = test_support::message(1, model::Id(2));
+		let mut embed = Embed {
+			kind: "rich".into(),
+			url: Some("https://example.org/post/1".into()),
+			..Default::default()
+		};
+		let mut cache = FormatCache::default();
+		assert_eq!(
+			source_fallback(&message, &embed, &mut cache, true),
+			embed.url
+		);
+		for content in [
+			"https://example.org/post/1",
+			"[Read the post](https://example.org/post/1)",
+		] {
+			message.content = content.into();
+			assert_eq!(source_fallback(&message, &embed, &mut cache, true), None);
+		}
+		for content in [
+			"https://example.org/post/12",
+			"`https://example.org/post/1`",
+		] {
+			message.content = content.into();
+			assert_eq!(
+				source_fallback(&message, &embed, &mut cache, true),
+				embed.url
+			);
+		}
+		embed.title = Some("A linked title".into());
+		assert_eq!(source_fallback(&message, &embed, &mut cache, true), None);
+		embed.title = Some(String::new());
+		embed.author = Some(model::EmbedAuthor {
+			name: "Author".into(),
+			url: embed.url.clone(),
+			..Default::default()
+		});
+		assert_eq!(source_fallback(&message, &embed, &mut cache, true), None);
+		embed.provider = embed.author.take();
+		assert_eq!(source_fallback(&message, &embed, &mut cache, true), None);
+		embed.provider = None;
+		embed.kind = "video".into();
+		assert_eq!(source_fallback(&message, &embed, &mut cache, true), None);
+		embed.kind = "rich".into();
+		embed.video = Some(model::EmbedMedia::default());
+		assert_eq!(source_fallback(&message, &embed, &mut cache, true), None);
+		embed.video = None;
+		for url in [
+			None,
+			Some("javascript:alert(1)"),
+			Some("https://user:password@example.org/post/1"),
+		] {
+			embed.url = url.map(str::to_owned);
+			assert_eq!(source_fallback(&message, &embed, &mut cache, true), None);
+		}
+	}
+
+	#[test]
+	fn untitled_card_source_author_and_provider_dispatch_their_own_urls() {
+		fn text_center(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
+			match shape {
+				egui::Shape::Text(text) if text.galley.job.text == label => {
+					Some(text.pos + text.galley.rect.center().to_vec2())
+				}
+				egui::Shape::Vec(shapes) => {
+					shapes.iter().find_map(|shape| text_center(shape, label))
+				}
+				_ => None,
+			}
+		}
+		for footer in [true, false] {
+			let source_label = crate::i18n::translate("embeds-link-open-link");
+			for (label, url) in [
+				(
+					if footer { "X" } else { &source_label },
+					"https://example.org/post/1",
+				),
+				("Author", "https://example.org/author"),
+				("Provider", "https://example.org/provider"),
+			] {
+				let mut message = test_support::message(1, model::Id(2));
+				message.content = "A post without its URL in the message".into();
+				message.embeds = vec![Embed {
+					kind: "rich".into(),
+					url: Some("https://example.org/post/1".into()),
+					author: Some(model::EmbedAuthor {
+						name: "Author".into(),
+						url: Some("https://example.org/author".into()),
+						..Default::default()
+					}),
+					provider: Some(model::EmbedAuthor {
+						name: "Provider".into(),
+						url: Some("https://example.org/provider".into()),
+						..Default::default()
+					}),
+					footer: footer.then(|| model::EmbedFooter {
+						text: "X".into(),
+						..Default::default()
+					}),
+					..Default::default()
+				}];
+				let ctx = egui::Context::default();
+				let mut opening = None;
+				let mut cache = FormatCache::default();
+				let mut images = Avatars::default();
+				let mut frame = |events| {
+					ctx.run_ui(
+						egui::RawInput {
+							screen_rect: Some(egui::Rect::from_min_size(
+								egui::Pos2::ZERO,
+								egui::vec2(640.0, 700.0),
+							)),
+							events,
+							..Default::default()
+						},
+						|ui| {
+							show(
+								ui,
+								&message,
+								&mut cache,
+								&mut images,
+								&mut opening,
+								&mut DownloadUi::default(),
+								&mut crate::profiles::ProfileSession::default(),
+								&client_core::State::default(),
+								crate::design::MessageCardSurface::Conversation,
+								false,
+							);
+						},
+					)
+				};
+				frame(vec![]).drop_without_applying_deltas();
+				let output = frame(vec![]);
+				let pos = output
+					.shapes
+					.iter()
+					.find_map(|shape| text_center(&shape.shape, label))
+					.expect(label);
+				output.drop_without_applying_deltas();
+				for pressed in [true, false] {
+					frame(vec![
+						egui::Event::PointerMoved(pos),
+						egui::Event::PointerButton {
+							pos,
+							button: egui::PointerButton::Primary,
+							pressed,
+							modifiers: egui::Modifiers::NONE,
+						},
+					])
+					.drop_without_applying_deltas();
+				}
+				assert_eq!(opening.as_deref(), Some(url), "{label}, footer={footer}");
+			}
+		}
+	}
+
+	#[test]
 	fn image_previews_dispatch_copy_and_save_without_opening_links() {
 		for variant in 0..5 {
-			for copy in [true, false] {
+			for (copy, hide_media_links) in
+				[(true, false), (false, false), (true, true), (false, true)]
+			{
 				let mut message = test_support::message(1, model::Id(2));
 				let media = model::EmbedMedia {
 					url: Some("https://cdn.discordapp.com/attachments/2/42/preview.png".into()),
@@ -899,6 +1157,9 @@ mod tests {
 					thumbnail: (variant == 3).then(|| media.clone()),
 					..Default::default()
 				}];
+				if hide_media_links {
+					message.content = message.embeds[0].url.clone().unwrap();
+				}
 				if variant == 4 {
 					message.embeds.push(message.embeds[0].clone());
 					message.embeds[0].image.as_mut().unwrap().url =
@@ -932,6 +1193,7 @@ mod tests {
 									&mut profile,
 									&client_core::State::default(),
 									crate::design::MessageCardSurface::Conversation,
+									hide_media_links,
 								)
 								.is_none()
 							);
@@ -955,6 +1217,13 @@ mod tests {
 					})
 					.next_back()
 					.expect("rendered image");
+				assert_eq!(
+					output.shapes.iter().any(|shape| matches!(&shape.shape,
+						egui::Shape::Text(text) if text.galley.job.text == crate::i18n::translate("embeds-link-open-link")
+					)),
+					variant != 1 && (!hide_media_links || matches!(variant, 0 | 4)),
+					"source action for media variant {variant}"
+				);
 				output.drop_without_applying_deltas();
 				for pressed in [true, false] {
 					frame(vec![
@@ -1271,6 +1540,7 @@ mod tests {
 					&mut profile,
 					&client_core::State::default(),
 					crate::design::MessageCardSurface::Conversation,
+					false,
 				);
 			},
 		);
@@ -1289,6 +1559,13 @@ mod tests {
 	/// An X/Twitter link card, shaped like the service's: author, text, footer and time.
 	#[test]
 	fn tweet_card_puts_footer_and_time_on_one_line_without_a_source_link() {
+		let _clock = crate::local_time::pin_now(
+			time::OffsetDateTime::parse(
+				"2026-10-14T12:00:00Z",
+				&time::format_description::well_known::Rfc3339,
+			)
+			.unwrap(),
+		);
 		let mut message = test_support::message(1, model::Id(2));
 		message.content = "https://x.com/synthetic/status/1".into();
 		message.embeds = vec![Embed {
@@ -1327,6 +1604,7 @@ mod tests {
 					&mut crate::profiles::ProfileSession::default(),
 					&client_core::State::default(),
 					crate::design::MessageCardSurface::Conversation,
+					false,
 				);
 			},
 		);

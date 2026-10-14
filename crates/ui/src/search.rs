@@ -1570,6 +1570,7 @@ impl SearchUi {
 										profile,
 										state,
 										crate::design::MessageCardSurface::Opaque,
+										false,
 									) {
 									media.download.gif_favorite_request = Some(gif);
 								}

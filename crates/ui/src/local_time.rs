@@ -22,7 +22,11 @@ pub fn set_format(format: model::TimeFormat, language: crate::i18n::Language) {
 
 /// Locales whose convention is a 12-hour clock with AM/PM.
 fn twelve_hour_locale(tag: &str) -> bool {
-	let tag = tag.replace('_', "-");
+	let tag = tag
+		.split(['.', '@'])
+		.next()
+		.unwrap_or_default()
+		.replace('_', "-");
 	let mut parts = tag.split('-');
 	let language = parts.next().unwrap_or_default().to_ascii_lowercase();
 	let region = parts
@@ -80,7 +84,28 @@ pub fn local(instant: time::OffsetDateTime) -> time::OffsetDateTime {
 
 /// Current wall-clock time in the local zone.
 pub fn now() -> time::OffsetDateTime {
+	#[cfg(test)]
+	if let Some(now) = TEST_NOW.get() {
+		return now;
+	}
 	local(time::OffsetDateTime::now_utc())
+}
+
+#[cfg(test)]
+thread_local! {
+	static TEST_NOW: std::cell::Cell<Option<time::OffsetDateTime>> = const { std::cell::Cell::new(None) };
+}
+
+/// Pins this test thread's clock until the returned guard is dropped, including on panic.
+#[cfg(test)]
+pub(crate) fn pin_now(now: time::OffsetDateTime) -> impl Drop {
+	struct Reset(Option<time::OffsetDateTime>);
+	impl Drop for Reset {
+		fn drop(&mut self) {
+			TEST_NOW.set(self.0);
+		}
+	}
+	Reset(TEST_NOW.replace(Some(now)))
 }
 
 /// Renders a Discord `<t:seconds:style>` reference the way the official client does: absolute
@@ -201,12 +226,50 @@ mod tests {
 
 	#[test]
 	fn auto_uses_twelve_hours_only_where_the_locale_does() {
-		for tag in ["en-US", "en_US.UTF-8", "en", "en-CA", "en-AU"] {
+		for tag in [
+			"en-US",
+			"en_US.UTF-8",
+			"en_US@calendar=gregorian",
+			"en",
+			"en-CA",
+			"en-AU",
+		] {
 			assert!(super::twelve_hour_locale(tag), "{tag}");
 		}
-		for tag in ["en-GB", "de-DE", "fr", "ja-JP", "cs_CZ"] {
+		for tag in [
+			"en-GB",
+			"en_GB.UTF-8",
+			"en_GB@calendar=gregorian",
+			"en_GB.UTF-8@calendar=gregorian",
+			"de-DE",
+			"fr",
+			"ja-JP",
+			"cs_CZ",
+		] {
 			assert!(!super::twelve_hour_locale(tag), "{tag}");
 		}
+	}
+
+	#[test]
+	fn calendar_uses_the_pinned_local_date_for_today_yesterday_and_older_times() {
+		let at = time::OffsetDateTime::parse(
+			"2026-10-12T17:37:03Z",
+			&time::format_description::well_known::Rfc3339,
+		)
+		.unwrap();
+		let clock = super::clock(at);
+		for (days, key) in [
+			(0, "search-result-today-at"),
+			(1, "search-result-yesterday-at"),
+		] {
+			let _clock = super::pin_now(at + time::Duration::days(days));
+			assert_eq!(
+				super::calendar(at),
+				crate::i18n::translate_args(key, &[("time", &clock)])
+			);
+		}
+		let _clock = super::pin_now(at + time::Duration::days(2));
+		assert_eq!(super::calendar(at), format!("10/12/26, {clock}"));
 	}
 
 	#[test]
