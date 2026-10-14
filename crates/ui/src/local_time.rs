@@ -113,6 +113,26 @@ pub fn discord_timestamp(seconds: i64, style: u8) -> Option<String> {
 		_ => format!("{} {}, {} {clock}", date.month(), date.day(), date.year()),
 	})
 }
+/// Discord's calendar time: "Today at 2:05 PM", "Yesterday at 14:05", else "10/12/26, 5:37 PM".
+pub fn calendar(utc: time::OffsetDateTime) -> String {
+	let at = local(utc);
+	let clock = clock(at);
+	let today = now().date();
+	if at.date() == today {
+		crate::i18n::translate_args("search-result-today-at", &[("time", &clock)])
+	} else if today.previous_day() == Some(at.date()) {
+		crate::i18n::translate_args("search-result-yesterday-at", &[("time", &clock)])
+	} else {
+		// Discord writes older times as "10/12/26, 5:37 PM".
+		let date = at.date();
+		format!(
+			"{}/{}/{:02}, {clock}",
+			u8::from(date.month()),
+			date.day(),
+			date.year().rem_euclid(100)
+		)
+	}
+}
 /// "… ago" for a past instant, measured against the current clock.
 pub(crate) fn ago(instant: time::OffsetDateTime) -> String {
 	relative(instant - time::OffsetDateTime::now_utc())

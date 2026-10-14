@@ -603,24 +603,22 @@ pub fn show(
 										);
 									}
 									if let Some(author) = &embed.author {
+										// Discord: a 24 px icon and the name in strong text,
+										// a link only on hover.
 										ui.horizontal_wrapped(|ui| {
+											ui.spacing_mut().item_spacing.x = 8.0;
 											if let Some(icon) = &author.icon {
 												images.show_media(
 													ui,
 													icon,
-													egui::vec2(20.0, 20.0),
+													egui::vec2(24.0, 24.0),
 													demo,
 													Surface::Inline,
 												);
 											}
-											link(
-												ui,
-												&author.name,
-												author.url.as_deref(),
-												opening,
-												false,
-											);
+											author_name(ui, author, opening, colors.text_strong);
 										});
+										ui.add_space(2.0);
 									}
 									if let Some(title) = &embed.title {
 										link(ui, title, embed.url.as_deref(), opening, true);
@@ -741,33 +739,50 @@ pub fn show(
 									opening,
 									false,
 								);
-							} else if embed.title.is_none()
-								&& let Some(url) = embed.url.as_deref()
-							{
-								link(ui, "Open source…", Some(url), opening, false);
 							}
-							if let Some(footer) = &embed.footer {
+							// One footer line, as on Discord: icon, text, then " • " and the
+							// embed time in the chosen clock style.
+							let when = embed.timestamp.as_deref().map(|raw| {
+								time::OffsetDateTime::parse(
+									raw,
+									&time::format_description::well_known::Rfc3339,
+								)
+								.map_or_else(|_| raw.to_owned(), crate::local_time::calendar)
+							});
+							let footer_text = embed
+								.footer
+								.as_ref()
+								.map(|footer| footer.text.as_str())
+								.filter(|text| !text.is_empty());
+							if footer_text.is_some() || when.is_some() {
+								ui.add_space(4.0);
 								ui.horizontal_wrapped(|ui| {
-									if let Some(icon) = &footer.icon {
+									ui.spacing_mut().item_spacing.x = 8.0;
+									if let Some(icon) =
+										embed.footer.as_ref().and_then(|f| f.icon.as_ref())
+									{
 										images.show_media(
 											ui,
 											icon,
-											egui::vec2(16.0, 16.0),
+											egui::vec2(20.0, 20.0),
 											demo,
 											Surface::Inline,
 										);
 									}
+									let line = match (footer_text, when.as_deref()) {
+										(Some(text), Some(when)) => format!("{text} • {when}"),
+										(Some(text), None) => text.to_owned(),
+										(None, Some(when)) => when.to_owned(),
+										(None, None) => String::new(),
+									};
 									ui.add(
 										egui::Label::new(
-											RichText::new(&footer.text).small().color(colors.muted),
+											RichText::new(line).size(12.0).color(colors.muted),
 										)
 										.wrap()
 										.selectable(true),
 									);
 								});
-							}
-							if let Some(timestamp) = &embed.timestamp {
-								ui.small(timestamp);
 							}
 							if group.iter().any(|e| e.limited) {
 								ui.small(crate::i18n::translate(
@@ -1270,6 +1285,77 @@ mod tests {
 		}
 		output.drop_without_applying_deltas();
 	}
+
+	/// An X/Twitter link card, shaped like the service's: author, text, footer and time.
+	#[test]
+	fn tweet_card_puts_footer_and_time_on_one_line_without_a_source_link() {
+		let mut message = test_support::message(1, model::Id(2));
+		message.content = "https://x.com/synthetic/status/1".into();
+		message.embeds = vec![Embed {
+			kind: "rich".into(),
+			url: Some(message.content.clone()),
+			description: Some("A synthetic post".into()),
+			author: Some(model::EmbedAuthor {
+				name: "Synthetic (@synthetic)".into(),
+				url: Some("https://x.com/synthetic".into()),
+				..Default::default()
+			}),
+			footer: Some(model::EmbedFooter {
+				text: "X".into(),
+				..Default::default()
+			}),
+			timestamp: Some("2026-10-12T17:37:03.721000+00:00".into()),
+			..Default::default()
+		}];
+		let ctx = egui::Context::default();
+		let output = ctx.run_ui(
+			egui::RawInput {
+				screen_rect: Some(egui::Rect::from_min_size(
+					egui::Pos2::ZERO,
+					egui::vec2(640.0, 700.0),
+				)),
+				..Default::default()
+			},
+			|ui| {
+				show(
+					ui,
+					&message,
+					&mut FormatCache::default(),
+					&mut Avatars::default(),
+					&mut None,
+					&mut DownloadUi::default(),
+					&mut crate::profiles::ProfileSession::default(),
+					&client_core::State::default(),
+					crate::design::MessageCardSurface::Conversation,
+				);
+			},
+		);
+		let mut painted = Vec::new();
+		fn walk(shape: &egui::Shape, out: &mut Vec<String>) {
+			match shape {
+				egui::Shape::Text(text) => out.push(text.galley.job.text.clone()),
+				egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| walk(shape, out)),
+				_ => {}
+			}
+		}
+		output
+			.shapes
+			.iter()
+			.for_each(|shape| walk(&shape.shape, &mut painted));
+		output.drop_without_applying_deltas();
+		let footer = painted
+			.iter()
+			.find(|text| text.starts_with("X • "))
+			.unwrap_or_else(|| panic!("{painted:?}"));
+		// Tests pin UTC; the clock style is whatever the process last set.
+		assert!(
+			footer == "X • 10/12/26, 17:37" || footer == "X • 10/12/26, 5:37 PM",
+			"{footer}"
+		);
+		assert!(painted.iter().any(|text| text == "Synthetic (@synthetic)"));
+		assert!(!painted.iter().any(|text| text.contains("Open source")));
+		assert!(!painted.iter().any(|text| text.contains("2026-10-12T")));
+	}
 }
 
 /// Shared star overlay for message GIFs and uploaded GIF attachments.
@@ -1326,4 +1412,41 @@ pub(crate) fn favorite_star(
 			crate::i18n::translate("embeds-show-save-to-gif-favorites")
 		}),
 	))
+}
+
+/// An embed author name: strong text that underlines on hover and opens its page if it has one.
+fn author_name(
+	ui: &mut egui::Ui,
+	author: &model::EmbedAuthor,
+	opening: &mut Option<String>,
+	color: egui::Color32,
+) {
+	let url = author.url.as_deref().and_then(external_url);
+	let response = ui.add(
+		egui::Label::new(RichText::new(&author.name).size(14.0).strong().color(color))
+			.wrap()
+			.sense(if url.is_some() {
+				egui::Sense::click()
+			} else {
+				egui::Sense::hover()
+			}),
+	);
+	if let Some(url) = url {
+		response.widget_info(|| {
+			egui::WidgetInfo::labeled(egui::Role::Link, ui.is_enabled(), &author.name)
+		});
+		if response.hovered() {
+			ui.painter().hline(
+				response.rect.x_range(),
+				response.rect.bottom(),
+				egui::Stroke::new(1.0, color),
+			);
+		}
+		if response
+			.on_hover_cursor(egui::CursorIcon::PointingHand)
+			.clicked()
+		{
+			*opening = Some(url);
+		}
+	}
 }

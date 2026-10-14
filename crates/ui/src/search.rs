@@ -1604,22 +1604,7 @@ const PAGER_HEIGHT: f32 = 50.0;
 
 /// Discord-style send time: "Today at 14:18", "Yesterday at 23:17", or the full date.
 fn sent_at(utc: time::OffsetDateTime) -> String {
-	let at = crate::local_time::local(utc);
-	let clock = crate::local_time::clock(at);
-	let today = crate::local_time::now().date();
-	if at.date() == today {
-		crate::i18n::translate_args("search-result-today-at", &[("time", &clock)])
-	} else if today.previous_day() == Some(at.date()) {
-		crate::i18n::translate_args("search-result-yesterday-at", &[("time", &clock)])
-	} else {
-		let date = at.date();
-		format!(
-			"{:02}/{:02}/{} {clock}",
-			u8::from(date.month()),
-			date.day(),
-			date.year()
-		)
-	}
+	crate::local_time::calendar(utc)
 }
 
 /// Shared download, audio and video controllers borrowed from the timeline for one frame.
