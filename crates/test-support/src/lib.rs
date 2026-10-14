@@ -2185,6 +2185,7 @@ mod tests {
 			query: retained_query,
 			before,
 			offset,
+			oldest: false,
 		} = state.request_search_page(2).unwrap()
 		else {
 			panic!()

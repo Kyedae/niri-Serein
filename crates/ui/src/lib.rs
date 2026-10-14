@@ -4919,7 +4919,9 @@ impl MessagingUi {
 								commands.push(command);
 							}
 							ctx.request_repaint();
-						} else if std::mem::take(&mut self.timeline.load_newer) {
+						} else if std::mem::take(&mut self.timeline.load_newer)
+							| std::mem::take(&mut self.timeline.fill_newer)
+						{
 							if let Some(command) = state.newer_history() {
 								commands.push(command);
 							}

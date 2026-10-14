@@ -4895,3 +4895,7 @@ time-format-12-hour = 12-hour
 time-format-24-hour = 24-hour
 profiles-status-edit = Edit status
 profiles-status-clear = Clear status
+search-overlays-message-contains = Message Contains
+search-overlays-no-matching-content-types = No matching content types
+search-overlays-history = History
+search-overlays-clear-history = Clear search history

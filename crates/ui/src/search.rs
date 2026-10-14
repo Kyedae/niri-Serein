@@ -37,7 +37,6 @@ pub struct SearchUi {
 	ime_frame: bool,
 	pending_submit: bool,
 	filters_open: bool,
-	oldest_first: bool,
 	hide_highlight: bool,
 	filter_draft: Option<filters::Draft>,
 	/// Names behind the readable `from:`/`mentions:`/`in:` tokens in `query`.
@@ -46,6 +45,8 @@ pub struct SearchUi {
 	relabel: bool,
 	search_anchor: Option<egui::Rect>,
 	suggestion_index: usize,
+	/// The last searches as typed, newest first; session only, like the rest of search.
+	history: Vec<String>,
 	formats: crate::markdown::FormatCache,
 	/// Bounded message shells for the current page so the chat media renderers can draw hits.
 	previews: std::collections::HashMap<Id, model::Message>,
@@ -272,8 +273,13 @@ impl SearchUi {
 					)
 					.clicked()
 					{
+						// Like Discord, the X clears the query and its results, then closes.
+						self.query.clear();
 						self.open = false;
 						self.filters_open = false;
+						if state.search.as_ref().is_some_and(|view| !view.pins) {
+							commands.push(state.clear_search());
+						}
 					}
 				});
 			});
@@ -295,11 +301,22 @@ impl SearchUi {
 		{
 			commands.push(command);
 			self.query = filters::display(&query, state, &mut self.labels);
+			self.remember(self.query.trim().to_owned());
 			if trailing_separator {
 				self.query.push(' ');
 			}
 			self.filters_open = false;
 		}
+	}
+	/// Keeps the four most recent distinct searches, as Discord's History lists them.
+	fn remember(&mut self, query: String) {
+		const HISTORY: usize = 4;
+		if query.is_empty() {
+			return;
+		}
+		self.history.retain(|known| *known != query);
+		self.history.insert(0, query);
+		self.history.truncate(HISTORY);
 	}
 	pub fn results_visible(&self, state: &State) -> bool {
 		self.open && !self.pins && (self.pending_submit || state.search.is_some())
@@ -356,7 +373,80 @@ impl SearchUi {
 						.show(ui, |ui| {
 							ui.set_width((width - 20.0).max(1.0));
 							ui.spacing_mut().item_spacing.y = 4.0;
-							if let Some((start, key, typed)) = filters::active_token(&self.query) {
+							if let Some((start, key, typed)) = filters::active_token(&self.query)
+								&& key == "has"
+							{
+								// Discord's "Message Contains" list; a pick searches at once.
+								let typed = typed.to_lowercase();
+								let values: Vec<&str> = filters::HAS
+									.iter()
+									.copied()
+									.filter(|value| value.starts_with(typed.as_str()))
+									.collect();
+								ui.label(
+									design::semibold(
+										ui,
+										crate::i18n::translate("search-overlays-message-contains"),
+										12.0,
+									)
+									.color(colors.muted),
+								);
+								let down = ctx.input_mut(|i| {
+									i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
+								});
+								let up = ctx.input_mut(|i| {
+									i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
+								});
+								if down {
+									self.suggestion_index = self.suggestion_index.saturating_add(1);
+								}
+								if up {
+									self.suggestion_index = self.suggestion_index.saturating_sub(1);
+								}
+								self.suggestion_index =
+									self.suggestion_index.min(values.len().saturating_sub(1));
+								let enter = !self.ime_frame
+									&& ctx.input_mut(|i| {
+										i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+									});
+								let mut chosen = None;
+								for (index, value) in values.iter().enumerate() {
+									let selected = index == self.suggestion_index;
+									// The highlighted row is filled, like the user and channel lists.
+									let background = ui.painter().add(egui::Shape::Noop);
+									let row = filters::suggestion_row(
+										ui,
+										&format!("has-{value}"),
+										value,
+										"",
+									);
+									if selected && !row.hovered() {
+										ui.painter().set(
+											background,
+											egui::Shape::rect_filled(row.rect, 6, colors.raised),
+										);
+									}
+									if row.clicked() || (enter && selected) {
+										chosen = Some(*value);
+									}
+								}
+								if values.is_empty() {
+									ui.label(crate::i18n::translate(
+										"search-overlays-no-matching-content-types",
+									));
+								}
+								if let Some(value) = chosen {
+									let query = format!("{}has:{value} ", &self.query[..start]);
+									if model::valid_search_query(&query) {
+										self.query = query;
+										self.filters_open = false;
+										self.focus = true;
+										submit = state.can_search();
+									}
+								}
+							} else if let Some((start, key, typed)) =
+								filters::active_token(&self.query)
+							{
 								let typed = typed.to_lowercase();
 								let users = filters::users(state);
 								let channels = filters::channels(state);
@@ -467,6 +557,8 @@ impl SearchUi {
 										self.query = query;
 										self.filters_open = false;
 										self.focus = true;
+										// Like Discord, picking someone shows their messages at once.
+										submit = state.can_search();
 									}
 								}
 							} else {
@@ -541,7 +633,7 @@ impl SearchUi {
 										&crate::i18n::translate_if_key(detail),
 									);
 									if row.clicked() {
-										if matches!(key, "from" | "mentions" | "in") {
+										if matches!(key, "from" | "mentions" | "in" | "has") {
 											let query = format!("{} {key}:", self.query.trim());
 											if query.len() <= 1024 && query.chars().count() <= 256 {
 												self.query = query.trim_start().to_owned();
@@ -550,6 +642,51 @@ impl SearchUi {
 										} else {
 											self.open_filters(state);
 										}
+									}
+								}
+								if !self.history.is_empty() {
+									ui.separator();
+									ui.add_space(4.0);
+									let mut clear = false;
+									ui.horizontal(|ui| {
+										ui.add_space(10.0);
+										ui.label(
+											design::semibold(
+												ui,
+												crate::i18n::translate("search-overlays-history"),
+												12.0,
+											)
+											.color(colors.muted),
+										);
+										ui.with_layout(
+											egui::Layout::right_to_left(egui::Align::Center),
+											|ui| {
+												clear = icons::button(
+													ui,
+													icons::Icon::Trash,
+													22.0,
+													&crate::i18n::translate(
+														"search-overlays-clear-history",
+													),
+												)
+												.clicked();
+											},
+										);
+									});
+									let mut picked = None;
+									for query in &self.history {
+										if filters::suggestion_row(ui, "history", query, "")
+											.clicked()
+										{
+											picked = Some(query.clone());
+										}
+									}
+									if clear {
+										self.history.clear();
+									} else if let Some(query) = picked {
+										self.query = query;
+										self.focus = true;
+										submit = state.can_search();
 									}
 								}
 							}
@@ -967,20 +1104,31 @@ impl SearchUi {
 					let sort_label = crate::i18n::translate("search-pane-sort");
 					let sort = chip(ui, Chip::new(icons::Icon::SortArrows, &sort_label));
 					egui::Popup::menu(&sort).show(|ui| {
-						ui.label(
-							RichText::new(crate::i18n::translate("search-pane-order-on-this-page"))
-								.color(colors.muted),
-						);
+						// Discord sorts every match, so Oldest starts at the very first message and
+						// its last page holds the most recent one.
+						let mut oldest = state.search_oldest;
 						ui.radio_value(
-							&mut self.oldest_first,
+							&mut oldest,
 							false,
 							crate::i18n::translate("search-pane-newest-first"),
 						);
 						ui.radio_value(
-							&mut self.oldest_first,
+							&mut oldest,
 							true,
 							crate::i18n::translate("search-pane-oldest-first"),
 						);
+						if oldest != state.search_oldest {
+							state.search_oldest = oldest;
+							if let Some(query) = state
+								.search
+								.as_ref()
+								.filter(|view| !view.pins)
+								.map(|view| view.query.clone())
+								&& let Some(command) = state.request_search(query, None)
+							{
+								commands.push(command);
+							}
+						}
 					});
 					let label = if filter_count > 0 {
 						crate::i18n::translate_args(
@@ -1060,11 +1208,7 @@ impl SearchUi {
 						}
 						let mut previous = None;
 						for index in 0..page.hits.len() {
-							let hit = &page.hits[if self.oldest_first {
-								page.hits.len() - 1 - index
-							} else {
-								index
-							}];
+							let hit = &page.hits[index];
 							// Consecutive hits from one channel share its heading, as in Discord.
 							if previous != Some(hit.channel) {
 								if previous.is_some() {
@@ -2309,6 +2453,122 @@ mod tests {
 				}
 			}
 		}
+	}
+	/// Picking a `from:` user or a `has:` type searches at once, history keeps four searches,
+	/// and Oldest asks Discord for the whole result set ascending.
+	#[test]
+	fn suggestions_search_at_once_history_keeps_four_and_oldest_sorts_on_the_service() {
+		let mut state = test_support::demo_state();
+		state.auth = client_core::auth::AuthState::Authenticated;
+		state.gateway_connected = true;
+		state.demo = false;
+		let ctx = egui::Context::default();
+		let mut view = SearchUi {
+			channel: state.selected,
+			open: true,
+			..SearchUi::default()
+		};
+		let frame = |view: &mut SearchUi, state: &mut State, enter: bool| {
+			let mut commands = Vec::new();
+			let mut painted = Vec::new();
+			let output = ctx.run_ui(
+				egui::RawInput {
+					screen_rect: Some(egui::Rect::from_min_size(
+						egui::Pos2::ZERO,
+						egui::vec2(900.0, 700.0),
+					)),
+					events: if enter {
+						vec![egui::Event::Key {
+							key: egui::Key::Enter,
+							physical_key: None,
+							pressed: true,
+							repeat: false,
+							modifiers: egui::Modifiers::NONE,
+						}]
+					} else {
+						vec![]
+					},
+					..Default::default()
+				},
+				|ui| {
+					view.header_input(ui, state, &mut commands);
+					view.overlays(
+						ui.ctx(),
+						state,
+						&mut crate::avatars::Avatars::default(),
+						&mut commands,
+					);
+				},
+			);
+			for shape in &output.shapes {
+				if let egui::Shape::Text(text) = &shape.shape {
+					painted.push(text.galley.job.text.clone());
+				}
+			}
+			output.drop_without_applying_deltas();
+			(commands, painted)
+		};
+		let searched = |commands: &[Command]| {
+			commands.iter().find_map(|command| match command {
+				Command::Search { query, oldest, .. } => Some((query.clone(), *oldest)),
+				_ => None,
+			})
+		};
+		// from: — Enter picks the highlighted person and their messages are requested.
+		view.query = "from:".into();
+		view.filters_open = true;
+		frame(&mut view, &mut state, false);
+		let (commands, _) = frame(&mut view, &mut state, true);
+		let (query, oldest) = searched(&commands).expect("picking a user searches");
+		assert!(query.starts_with("from:") && !oldest, "{query}");
+		// has: — the type list, then an immediate search.
+		view.query = "has:".into();
+		view.filters_open = true;
+		let (_, painted) = frame(&mut view, &mut state, false);
+		for value in filters::HAS {
+			assert!(painted.iter().any(|text| text == value), "{value} listed");
+		}
+		assert!(painted.iter().any(|text| text == "Message Contains"));
+		let (commands, _) = frame(&mut view, &mut state, true);
+		assert_eq!(
+			searched(&commands).map(|(q, _)| q),
+			Some("has:image".into())
+		);
+		// History: the newest four distinct searches, shown under the filter list.
+		for query in ["one", "two", "three", "two", "four", "five"] {
+			view.remember(query.into());
+		}
+		assert_eq!(view.history, ["five", "four", "two", "three"]);
+		view.query.clear();
+		view.filters_open = true;
+		let (_, painted) = frame(&mut view, &mut state, false);
+		assert!(painted.iter().any(|text| text == "History"));
+		assert!(painted.iter().any(|text| text == "five"));
+		// Oldest is sent to Discord with the search, not applied to one page.
+		state.search_oldest = true;
+		let command = state.request_search("synthetic".into(), None).unwrap();
+		assert!(matches!(command, Command::Search { oldest: true, .. }));
+		let Command::Search { request, .. } = command else {
+			unreachable!()
+		};
+		state.apply_search(
+			state.selected.unwrap(),
+			request,
+			Ok(client_core::search::Outcome::Page(model::SearchPage {
+				hits: vec![],
+				total: 60,
+				partial: false,
+				pin_cursor: None,
+			})),
+		);
+		assert!(matches!(
+			state.request_search_page(2),
+			Some(Command::Search {
+				oldest: true,
+				offset: 50,
+				..
+			})
+		));
 	}
 	#[test]
 	fn keyboard_search_is_explicit_and_ime_commit_does_not_submit() {
