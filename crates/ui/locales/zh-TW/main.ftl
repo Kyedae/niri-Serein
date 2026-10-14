@@ -4828,3 +4828,11 @@ timeline-dm-intro = 這是你與 { $name } 的私訊紀錄的開頭。
 timeline-channel-intro-title = 歡迎來到 #{ $channel }！
 # Context: timeline_channel_intro
 timeline-channel-intro-start = 這是 #{ $channel } 頻道的開頭。
+# Context: text_menu
+text-menu-cut = 剪下
+text-menu-copy = 複製
+text-menu-paste = 貼上
+text-menu-select-all = 全選
+# Context: media_box
+forum-composer-attached-files = 已附加 { $count } 個檔案
+forum-composer-remove-file = 移除 { $file }

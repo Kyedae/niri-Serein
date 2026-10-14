@@ -4732,3 +4732,11 @@ timeline-dm-intro = Este es el comienzo de tu historial de mensajes directos con
 timeline-channel-intro-title = ¡Te damos la bienvenida a #{ $channel }!
 # Context: timeline_channel_intro
 timeline-channel-intro-start = Este es el comienzo del canal #{ $channel }.
+# Context: text_menu
+text-menu-cut = Cortar
+text-menu-copy = Copiar
+text-menu-paste = Pegar
+text-menu-select-all = Seleccionar todo
+# Context: media_box
+forum-composer-attached-files = { $count } archivos adjuntos
+forum-composer-remove-file = Quitar { $file }
