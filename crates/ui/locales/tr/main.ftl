@@ -4720,3 +4720,70 @@ timeline-channel-intro-title = #{ $channel } kanalına hoş geldin!
 timeline-channel-intro-start = #{ $channel } kanalının başlangıcı.
 post-menu-post-action-failed = Gönderi işlemi başarısız oldu
 post-menu-thread-action-failed = Konu işlemi başarısız oldu
+
+# Context: badges
+badges-nitro = Nitro
+# Context: badges
+badges-rarity-common = Yaygın
+# Context: badges
+badges-rarity-rare = Nadir
+# Context: badges
+badges-rarity-epic = Destansı
+# Context: badges
+badges-rarity-mythic = Efsanevi
+# Context: badges
+badges-always-visible = Profilinde her zaman gösterilir
+# Context: badges
+badges-click-show = Göstermek için tıkla
+# Context: badges
+badges-click-hide = Gizlemek için tıkla
+# Context: badges
+badges-customize-title = Rozetlerini özelleştir
+# Context: badges
+badges-customize-hint = Sıralamak için sürükle, başkalarının görmesini istemediklerini gizle.
+# Context: badges
+badges-none = Henüz gösterilecek rozet yok.
+# Context: badges
+badges-reset = Sıfırla
+# Context: badges
+badges-saving = Kaydediliyor…
+# Context: badges
+badges-save = Kaydet
+# Context: badges
+badges-view = Rozetleri gör
+# Context: badges
+badges-your = Rozetlerin
+# Context: badges
+badges-user = { $name } kullanıcısının rozetleri
+# Context: badges
+badges-browse = Rozetlerine göz at ve açabileceğin yenilerini keşfet.
+# Context: badges
+badges-available = Açılabilir
+# Context: badges
+badges-customize-button = Rozetlerini özelleştir
+# Context: badges
+badges-close = Kapat
+# Context: badges
+badges-locked = Henüz açılmadı
+# Context: badges
+badges-date-unlocked = Açılış tarihi
+# Context: badges
+badges-rarity = Nadirlik
+# Context: badges
+badges-max-level = Bu rozetin en yüksek seviyesine ulaştın.
+# Context: badges
+badges-next-level = Sonraki seviye: { $tier }
+# Context: badges
+badges-all-levels = Tüm seviyeleri gör
+# Context: badges
+badges-hide-levels = Seviyeleri gizle
+# Context: badges
+badges-manage = Rozetleri yönet
+page-language-time = Dil ve Saat
+description-language-time = Arayüz dili ve saatin gösterimi.
+time-format-group = Saat biçimi
+time-format-auto = Otomatik
+time-format-12-hour = 12 saat
+time-format-24-hour = 24 saat
+profiles-status-edit = Durumu düzenle
+profiles-status-clear = Durumu temizle
