@@ -1366,7 +1366,8 @@ impl SearchUi {
 	}
 	/// Bounded message shell that lets the chat attachment and embed renderers draw a hit.
 	fn shell(&mut self, hit: &model::SearchHit) {
-		self.previews
+		let preview = self
+			.previews
 			.entry(hit.id)
 			.or_insert_with(|| model::Message {
 				poll: None,
@@ -1381,7 +1382,7 @@ impl SearchUi {
 				author: hit.author.clone(),
 				author_roles: vec![],
 				author_nick: None,
-				content: String::new(),
+				content: hit.excerpt.clone(),
 				mentions: hit.mentions.clone(),
 				mention_roles: vec![],
 				mention_everyone: false,
@@ -1401,6 +1402,10 @@ impl SearchUi {
 				embeds_suppressed: false,
 				attachments: hit.attachments.clone(),
 			});
+		// Source-link detection shares the displayed excerpt's markdown cache entry.
+		if preview.content != hit.excerpt {
+			preview.content.clone_from(&hit.excerpt);
+		}
 	}
 	#[allow(clippy::too_many_arguments)]
 	fn result_card(
@@ -2414,47 +2419,68 @@ mod tests {
 			channels: vec![channel],
 			..State::default()
 		};
-		let hit = model::SearchHit {
+		let mut hit = model::SearchHit {
 			id: Id(1 << 22),
 			channel: Id(1),
 			author: user.clone(),
 			mentions: vec![user],
-			excerpt: "Hello <@42> in <#99>".into(),
+			excerpt: "Hello <@42> in <#99> https://example.com/source".into(),
 			attachments: vec![],
-			embeds: vec![],
+			embeds: vec![model::Embed {
+				url: Some("https://example.com/source".into()),
+				..model::Embed::default()
+			}],
 		};
 		let ctx = egui::Context::default();
 		let mut view = SearchUi {
 			pins: true,
 			..SearchUi::default()
 		};
-		let mut output = ctx.run_ui(Default::default(), |ui| {
-			view.result_card(
-				ui,
-				&state,
-				&hit,
-				"",
-				&mut crate::avatars::Avatars::default(),
-				&mut MediaUi {
-					download: &mut crate::attachments::DownloadUi::default(),
-					audio: &mut crate::audio::AudioUi::default(),
-					video: &mut crate::video::VideoUi::default(),
-				},
-				&mut crate::profiles::ProfileSession::default(),
-				&mut None,
-			);
-		});
-		let text = output
-			.shapes
-			.iter()
-			.filter_map(|shape| match &shape.shape {
-				egui::Shape::Text(text) => Some(text.galley.text()),
-				_ => None,
-			})
-			.collect::<String>();
-		output.textures_delta.clear();
+		let mut render = |hit: &model::SearchHit| {
+			let mut output = ctx.run_ui(Default::default(), |ui| {
+				view.result_card(
+					ui,
+					&state,
+					hit,
+					"",
+					&mut crate::avatars::Avatars::default(),
+					&mut MediaUi {
+						download: &mut crate::attachments::DownloadUi::default(),
+						audio: &mut crate::audio::AudioUi::default(),
+						video: &mut crate::video::VideoUi::default(),
+					},
+					&mut crate::profiles::ProfileSession::default(),
+					&mut None,
+				);
+			});
+			let text = output
+				.shapes
+				.iter()
+				.filter_map(|shape| match &shape.shape {
+					egui::Shape::Text(text) => Some(text.galley.text()),
+					_ => None,
+				})
+				.collect::<String>();
+			output.textures_delta.clear();
+			text
+		};
+		let text = render(&hit);
 		assert!(text.contains("@Mentioned"), "rendered text: {text}");
 		assert!(!text.contains("@42"), "rendered text: {text}");
+		assert!(
+			text.contains("https://example.com/source"),
+			"rendered text: {text}"
+		);
+		assert!(
+			!text.contains(&crate::i18n::translate("embeds-link-open-link")),
+			"a source already visible in the search excerpt must not gain a duplicate action: {text}"
+		);
+		hit.excerpt = "Hello <@42> in <#99>".into();
+		let text = render(&hit);
+		assert!(
+			text.contains(&crate::i18n::translate("embeds-link-open-link")),
+			"a changed search excerpt without the source must restore its action: {text}"
+		);
 		assert_eq!(view.channel_reference_load, Some(Id(99)));
 	}
 }
