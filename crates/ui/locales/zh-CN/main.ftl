@@ -4909,3 +4909,7 @@ profiles-status-edit = 编辑状态
 profiles-status-clear = 清除状态
 profiles-private-profile = 私密资料
 profiles-private-notice = { $name } 的个人资料是私密的，部分信息已隐藏。添加为好友即可查看更多。
+search-overlays-message-contains = 消息包含
+search-overlays-no-matching-content-types = 没有匹配的内容类型
+search-overlays-history = 历史记录
+search-overlays-clear-history = 清除搜索历史

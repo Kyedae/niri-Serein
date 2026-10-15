@@ -4811,3 +4811,7 @@ profiles-status-edit = Status bearbeiten
 profiles-status-clear = Status löschen
 profiles-private-profile = Privates Profil
 profiles-private-notice = Das Profil von { $name } ist privat, daher sind manche Infos verborgen. Sende eine Freundschaftsanfrage, um mehr zu sehen.
+search-overlays-message-contains = Nachricht enthält
+search-overlays-no-matching-content-types = Keine passenden Inhaltstypen
+search-overlays-history = Verlauf
+search-overlays-clear-history = Suchverlauf löschen

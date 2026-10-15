@@ -4814,3 +4814,7 @@ profiles-status-edit = Изменить статус
 profiles-status-clear = Очистить статус
 profiles-private-profile = Закрытый профиль
 profiles-private-notice = Профиль { $name } закрыт, поэтому часть сведений скрыта. Добавьте пользователя в друзья, чтобы увидеть больше.
+search-overlays-message-contains = Сообщение содержит
+search-overlays-no-matching-content-types = Нет подходящих типов содержимого
+search-overlays-history = История
+search-overlays-clear-history = Очистить историю поиска

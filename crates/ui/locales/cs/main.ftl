@@ -4897,3 +4897,7 @@ profiles-status-edit = Upravit stav
 profiles-status-clear = Vymazat stav
 profiles-private-profile = Soukromý profil
 profiles-private-notice = Profil uživatele { $name } je soukromý, takže některé informace jsou skryté. Pošlete žádost o přátelství, abyste viděli víc.
+search-overlays-message-contains = Zpráva obsahuje
+search-overlays-no-matching-content-types = Žádné odpovídající typy obsahu
+search-overlays-history = Historie
+search-overlays-clear-history = Vymazat historii hledání

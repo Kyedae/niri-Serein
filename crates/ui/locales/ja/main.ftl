@@ -4794,3 +4794,7 @@ profiles-status-edit = ステータスを編集
 profiles-status-clear = ステータスを消去
 profiles-private-profile = 非公開プロフィール
 profiles-private-notice = { $name } さんのプロフィールは非公開のため、一部の情報が表示されません。フレンドに追加すると詳しく見られます。
+search-overlays-message-contains = メッセージに含まれるもの
+search-overlays-no-matching-content-types = 一致するコンテンツの種類はありません
+search-overlays-history = 履歴
+search-overlays-clear-history = 検索履歴を消去

@@ -4813,3 +4813,7 @@ profiles-status-edit = Edytuj status
 profiles-status-clear = Wyczyść status
 profiles-private-profile = Profil prywatny
 profiles-private-notice = Profil użytkownika { $name } jest prywatny, więc część informacji jest ukryta. Wyślij zaproszenie do znajomych, aby zobaczyć więcej.
+search-overlays-message-contains = Wiadomość zawiera
+search-overlays-no-matching-content-types = Brak pasujących typów treści
+search-overlays-history = Historia
+search-overlays-clear-history = Wyczyść historię wyszukiwania
