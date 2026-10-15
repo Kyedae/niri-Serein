@@ -762,7 +762,7 @@ pub struct State {
 	pub direct_presence_bytes: Option<(usize, usize)>,
 	#[doc(hidden)]
 	pub direct_presence_epoch: u64,
-	/// A direct presence was dropped or evicted since the store was last cleared.
+	/// A direct presence was dropped or evicted, or READY's presence was unavailable.
 	#[doc(hidden)]
 	pub direct_presence_lossy: bool,
 	pub member_request: u64,
@@ -2671,6 +2671,8 @@ impl State {
 				}
 				if warnings.presence {
 					self.clear_direct_presences();
+					// Without READY's presence, a missing record no longer means offline.
+					self.direct_presence_lossy = true;
 				}
 				Ok(())
 			}
@@ -3285,6 +3287,8 @@ impl State {
 				channels,
 			} => {
 				self.clear_direct_presences();
+				// READY starts a complete snapshot; a presence warning may follow it.
+				self.direct_presence_lossy = false;
 				if self
 					.user
 					.as_ref()

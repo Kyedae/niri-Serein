@@ -189,8 +189,8 @@ impl State {
 		self.direct_presences.iter().find(|p| p.user == user)
 	}
 	/// Discord sends no presence for an offline friend or DM recipient, so one without a record is
-	/// offline. Not once the bounded store has dropped a record, or when it tracks more people
-	/// than the gateway bootstraps; then their status is unknown.
+	/// offline. Not once the bounded store has dropped a record, READY's presence was reported
+	/// unavailable, or it tracks more people than the gateway bootstraps; then it is unknown.
 	pub fn absent_presence_offline(&self, user: Id) -> bool {
 		self.gateway_connected
 			&& !self.direct_presence_lossy
@@ -336,7 +336,6 @@ impl State {
 		}
 		self.direct_presences.clear();
 		self.direct_presence_bytes = None;
-		self.direct_presence_lossy = false;
 	}
 	pub(crate) fn apply_member_presence(
 		&mut self,
@@ -1059,8 +1058,18 @@ mod tests {
 			),
 		);
 		assert!(!state.absent_presence_offline(recipient.id));
-		state.clear_direct_presences();
+		state.direct_presence_lossy = false;
 		assert!(state.absent_presence_offline(recipient.id));
+		// A presence warning clears the store without making it complete.
+		apply(
+			&mut state,
+			Event::StartupWarnings(model::account::Warnings {
+				presence: true,
+				..Default::default()
+			}),
+		);
+		assert!(!state.absent_presence_offline(recipient.id));
+		state.direct_presence_lossy = false;
 		state.channels[0].recipients = (0..=MAX_DIRECT_PRESENCES as u64)
 			.map(|id| model::User {
 				id: Id(recipient.id.0 + id),
