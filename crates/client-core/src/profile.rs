@@ -81,6 +81,10 @@ impl ProfileCache {
 	pub(crate) fn forget(&mut self, user: Id) {
 		self.entries.retain(|entry| entry.user != user);
 	}
+	/// Keeps only cached views of users for whom `keep` holds.
+	pub(crate) fn retain_users(&mut self, mut keep: impl FnMut(Id) -> bool) {
+		self.entries.retain(|entry| keep(entry.user));
+	}
 	pub fn len(&self) -> usize {
 		self.entries.len()
 	}
@@ -896,6 +900,34 @@ mod tests {
 			.unwrap();
 		assert!(!state.profile_cache.contains(Id(1), None, now));
 		assert_eq!(state.profile_cache.len(), 1);
+		// A friend snapshot drops only the users it adds or removes.
+		let friend = |id| {
+			let mut user = own_data("Friend").user;
+			user.id = Id(id);
+			(user, "friend".to_owned())
+		};
+		state
+			.apply_user_action(crate::user_actions::Event::Friends(Some(vec![
+				friend(2),
+				friend(3),
+			])))
+			.unwrap();
+		assert!(state.profile_cache.is_empty());
+		state
+			.profile_cache
+			.insert(Id(2), None, *own_data("Two"), now);
+		state
+			.profile_cache
+			.insert(Id(3), None, *own_data("Three"), now);
+		state
+			.apply_user_action(crate::user_actions::Event::Friends(Some(vec![friend(2)])))
+			.unwrap();
+		assert!(state.profile_cache.contains(Id(2), None, now));
+		assert!(!state.profile_cache.contains(Id(3), None, now));
+		state
+			.apply_user_action(crate::user_actions::Event::Friends(None))
+			.unwrap();
+		assert!(state.profile_cache.is_empty());
 	}
 	fn complete_own(state: &mut State, result: Result<Box<UserProfile>, Failure>) {
 		state.apply(Envelope {
