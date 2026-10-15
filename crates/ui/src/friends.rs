@@ -595,7 +595,15 @@ impl MessagingUi {
 								{
 									(None, None, &[][..], model::ClientPlatforms::default())
 								} else {
-									profiles::presence(state, user.id, None)
+									let (status, custom, activities, clients) =
+										profiles::presence(state, user.id, None);
+									// No presence while connected means offline, as on Discord.
+									(
+										profiles::shown_status(state, status),
+										custom,
+										activities,
+										clients,
+									)
 								};
 								let dm = restricted
 									.is_none()

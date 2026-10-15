@@ -2114,7 +2114,7 @@ impl MessagingUi {
 								design::presence_dot(
 									ui,
 									avatar.rect,
-									profiles::presence_color(self.own_presence.status.wire()),
+									self.own_presence.status.wire(),
 									ring,
 								);
 								anchor =

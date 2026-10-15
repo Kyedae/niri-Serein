@@ -1043,6 +1043,11 @@ fn presence_badge_rect(rect: Rect) -> Rect {
 fn pointer_on_presence(status: Option<&str>, avatar: Rect, pointer: Option<egui::Pos2>) -> bool {
 	status.is_some() && pointer.is_some_and(|pos| presence_badge_rect(avatar).contains(pos))
 }
+/// Discord sends no presence for someone offline, so once connected an absent status is shown
+/// as offline. While disconnected nobody's status is known, and none is shown.
+pub(crate) fn shown_status<'a>(state: &State, status: Option<&'a str>) -> Option<&'a str> {
+	status.or_else(|| state.gateway_connected.then_some("offline"))
+}
 pub(crate) fn presence_badge(
 	ui: &mut egui::Ui,
 	rect: Rect,
@@ -1051,21 +1056,71 @@ pub(crate) fn presence_badge(
 	ring: Color32,
 ) {
 	let (radius, ring_width, center) = presence_badge_metrics(rect);
-	ui.painter()
-		.circle_filled(center, radius + ring_width, ring);
-	if clients.mobile {
-		icons::paint(
-			ui.painter(),
-			Icon::DeviceMobile,
-			Rect::from_center_size(center, Vec2::splat(radius * 2.2)),
-			presence_color(status),
-		);
-	} else {
-		ui.painter()
-			.circle_filled(center, radius, presence_color(status));
-	}
+	// Like Discord, the phone shows only for someone online from a phone.
+	let mobile = clients.mobile && status == "online";
+	paint_status(
+		ui.painter(),
+		center,
+		radius,
+		status,
+		mobile,
+		(ring, ring_width),
+	);
 	ui.allocate_rect(presence_badge_rect(rect), egui::Sense::hover())
 		.on_hover_text(presence_label(status));
+}
+
+/// Discord's status glyphs, each set in a surface-coloured `ring` around a `radius` disc: a
+/// green disc online, a yellow crescent idle, a red disc with a bar for Do Not Disturb, a
+/// grey ring offline or invisible, and a green phone for someone online from a phone.
+pub(crate) fn paint_status(
+	painter: &egui::Painter,
+	center: egui::Pos2,
+	radius: f32,
+	status: &str,
+	mobile: bool,
+	(ring, ring_width): (Color32, f32),
+) {
+	let color = presence_color(status);
+	if mobile {
+		// Discord's phone: a 3:5 rounded body, a large screen and a round home button.
+		let (width, height) = (radius * 1.8, radius * 3.0);
+		let body = Rect::from_center_size(center - vec2(0.0, radius * 0.3), vec2(width, height));
+		let corner = width * 0.2;
+		painter.rect_filled(body.expand(ring_width), corner + ring_width, ring);
+		painter.rect_filled(body, corner, color);
+		let screen = Rect::from_min_max(
+			body.min + vec2(width * 0.15, height * 0.15),
+			pos2(body.max.x - width * 0.15, body.min.y + height * 0.575),
+		);
+		painter.rect_filled(screen, 0.0, ring);
+		painter.circle_filled(
+			pos2(body.center().x, body.min.y + height * 0.825),
+			height * 0.085,
+			ring,
+		);
+		return;
+	}
+	painter.circle_filled(center, radius + ring_width, ring);
+	painter.circle_filled(center, radius, color);
+	match status {
+		"idle" => {
+			// The crescent: a disc of the ring colour bites the upper left.
+			painter.circle_filled(center - Vec2::splat(radius * 0.45), radius * 0.72, ring);
+		}
+		"dnd" => {
+			painter.rect_filled(
+				Rect::from_center_size(center, vec2(radius * 1.25, radius * 0.5)),
+				radius * 0.25,
+				ring,
+			);
+		}
+		"online" => {}
+		// Offline and invisible are a hollow ring.
+		_ => {
+			painter.circle_filled(center, radius * 0.5, ring);
+		}
+	}
 }
 /// Keep known guild presence through range loads and reconnects; access loss clears the snapshot.
 pub(crate) fn presence(
@@ -5516,5 +5571,14 @@ mod tests {
 				(expected, other) => panic!("{expected}: {:?}", other.is_some()),
 			}
 		}
+	}
+
+	#[test]
+	fn absent_presence_reads_as_offline_only_while_connected() {
+		let mut state = State::default();
+		assert_eq!(shown_status(&state, None), None);
+		state.gateway_connected = true;
+		assert_eq!(shown_status(&state, None), Some("offline"));
+		assert_eq!(shown_status(&state, Some("idle")), Some("idle"));
 	}
 }
