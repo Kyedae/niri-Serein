@@ -4897,3 +4897,7 @@ profiles-status-edit = Upravit stav
 profiles-status-clear = Vymazat stav
 settings-cosmetics-name-styles = Styly jmen
 settings-cosmetics-name-styles-description = Písma, barvy a efekty zobrazovaných jmen s Nitrem.
+search-overlays-message-contains = Zpráva obsahuje
+search-overlays-no-matching-content-types = Žádné odpovídající typy obsahu
+search-overlays-history = Historie
+search-overlays-clear-history = Vymazat historii hledání

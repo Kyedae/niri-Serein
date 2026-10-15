@@ -4811,3 +4811,7 @@ profiles-status-edit = Modifica stato
 profiles-status-clear = Cancella stato
 settings-cosmetics-name-styles = Stili del nome
 settings-cosmetics-name-styles-description = Caratteri, colori ed effetti del nome visualizzato Nitro.
+search-overlays-message-contains = Il messaggio contiene
+search-overlays-no-matching-content-types = Nessun tipo di contenuto corrispondente
+search-overlays-history = Cronologia
+search-overlays-clear-history = Cancella cronologia di ricerca

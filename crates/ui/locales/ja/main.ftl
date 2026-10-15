@@ -4794,3 +4794,7 @@ profiles-status-edit = ステータスを編集
 profiles-status-clear = ステータスを消去
 settings-cosmetics-name-styles = 名前のスタイル
 settings-cosmetics-name-styles-description = Nitro の表示名のフォント、色とエフェクト。
+search-overlays-message-contains = メッセージに含まれるもの
+search-overlays-no-matching-content-types = 一致するコンテンツの種類はありません
+search-overlays-history = 履歴
+search-overlays-clear-history = 検索履歴を消去

@@ -4797,3 +4797,7 @@ profiles-status-edit = Durumu düzenle
 profiles-status-clear = Durumu temizle
 settings-cosmetics-name-styles = Ad stilleri
 settings-cosmetics-name-styles-description = Nitro görünen ad yazı tipleri, renkleri ve efektleri.
+search-overlays-message-contains = Mesaj şunu içerir
+search-overlays-no-matching-content-types = Eşleşen içerik türü yok
+search-overlays-history = Geçmiş
+search-overlays-clear-history = Arama geçmişini temizle

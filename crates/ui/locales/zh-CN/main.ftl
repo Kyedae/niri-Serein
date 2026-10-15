@@ -4909,3 +4909,7 @@ profiles-status-edit = 编辑状态
 profiles-status-clear = 清除状态
 settings-cosmetics-name-styles = 名称样式
 settings-cosmetics-name-styles-description = Nitro 显示名称的字体、颜色和特效。
+search-overlays-message-contains = 消息包含
+search-overlays-no-matching-content-types = 没有匹配的内容类型
+search-overlays-history = 历史记录
+search-overlays-clear-history = 清除搜索历史
