@@ -667,6 +667,9 @@ impl State {
 		}
 		Ok(())
 	}
+	pub(crate) fn friend_count(&self) -> usize {
+		self.user_actions.friends.len()
+	}
 	pub fn friends_known(&self) -> bool {
 		self.user_actions.friends_known
 	}
