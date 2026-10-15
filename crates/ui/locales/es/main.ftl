@@ -4813,4 +4813,4 @@ time-format-24-hour = 24 horas
 profiles-status-edit = Editar estado
 profiles-status-clear = Borrar estado
 profiles-private-profile = Perfil privado
-profiles-private-notice = El perfil de { $name } es privado, así que parte de la información está oculta. Añádelo como amigo para ver más.
+profiles-private-notice = El perfil de { $name } es privado, así que parte de la información está oculta. Envía una solicitud de amistad para ver más.

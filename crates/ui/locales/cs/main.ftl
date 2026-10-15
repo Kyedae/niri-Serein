@@ -4896,4 +4896,4 @@ time-format-24-hour = 24hodinový
 profiles-status-edit = Upravit stav
 profiles-status-clear = Vymazat stav
 profiles-private-profile = Soukromý profil
-profiles-private-notice = Profil uživatele { $name } je soukromý, takže některé informace jsou skryté. Přidejte si ho do přátel, abyste viděli víc.
+profiles-private-notice = Profil uživatele { $name } je soukromý, takže některé informace jsou skryté. Pošlete žádost o přátelství, abyste viděli víc.

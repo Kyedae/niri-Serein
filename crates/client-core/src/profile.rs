@@ -77,6 +77,10 @@ impl ProfileCache {
 			change(&mut entry.data);
 		}
 	}
+	/// Drops every cached view of `user`, such as after a friendship changes what they share.
+	pub(crate) fn forget(&mut self, user: Id) {
+		self.entries.retain(|entry| entry.user != user);
+	}
 	pub fn len(&self) -> usize {
 		self.entries.len()
 	}
@@ -872,6 +876,26 @@ mod tests {
 			gateway_connected: true,
 			..Default::default()
 		}
+	}
+	#[test]
+	fn a_friendship_change_drops_the_cached_profile() {
+		let mut state = State::default();
+		let now = Instant::now();
+		let mut private = *own_data("Synthetic");
+		private.private = true;
+		state.profile_cache.insert(Id(1), None, private, now);
+		state
+			.profile_cache
+			.insert(Id(2), None, *own_data("Other"), now);
+		state
+			.apply_user_action(crate::user_actions::Event::Friend {
+				user: Id(1),
+				friend: false,
+				profile: None,
+			})
+			.unwrap();
+		assert!(!state.profile_cache.contains(Id(1), None, now));
+		assert_eq!(state.profile_cache.len(), 1);
 	}
 	fn complete_own(state: &mut State, result: Result<Box<UserProfile>, Failure>) {
 		state.apply(Envelope {

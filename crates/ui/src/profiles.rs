@@ -2948,6 +2948,8 @@ pub fn show_with_session(
 		};
 		// Discord heads a profile that is private to this viewer with a locked strip.
 		let private = data.is_some_and(|d| d.private);
+		// The height budget starts here, so it includes the strip above the banner.
+		let header_top = ui.cursor().top();
 		if private {
 			let (strip, _) = ui.allocate_exact_size(vec2(width, 30.0), egui::Sense::hover());
 			ui.painter().rect_filled(
@@ -3545,7 +3547,7 @@ pub fn show_with_session(
 							} else {
 								divider(ui, &theme);
 							}
-							let used = ui.cursor().top() - banner.top();
+							let used = ui.cursor().top() - header_top;
 							// No floor here: a busy profile (many badges, connections, a long
 							// bio) must still fit `bounds`, or the card's rounded bottom
 							// corner renders past the window edge and looks square.

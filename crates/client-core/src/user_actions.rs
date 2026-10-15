@@ -1216,6 +1216,8 @@ impl State {
 				friend,
 				profile,
 			} => {
+				// Profile Privacy depends on friendship, so a cached profile may now be stale.
+				self.profile_cache.forget(user);
 				if let Some((Action::ProfileFriend { user: target, .. }, _, observed)) =
 					&mut self.user_actions.pending
 					&& *target == user
