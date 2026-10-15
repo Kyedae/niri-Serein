@@ -728,12 +728,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let extension = value("--extension=").map(str::to_owned);
 	let name_style = value("--name-style=").and_then(|id| id.parse::<u32>().ok());
 	let name_font = value("--name-font=").and_then(|id| id.parse::<u32>().ok());
-	// `--name-style=` and `--name-font=` give the previewed user a synthetic Nitro name style.
+	// `--name-style=` and `--name-font=` give the previewed user a synthetic Nitro name style;
+	// a font alone uses the solid effect.
+	let styled = name_style.is_some() || name_font.is_some();
 	let style_name = |user: &mut model::User| {
-		if let Some(effect) = name_style {
+		if styled {
 			user.cosmetics.get_or_insert_default().name_style = Some(model::NameStyle {
 				font: name_font.unwrap_or(0),
-				effect: model::NameEffect::from_id(effect),
+				effect: model::NameEffect::from_id(name_style.unwrap_or(1)),
 				colors: vec![0xff7ab8, 0x7a5cff, 0x34d6ff, 0xffd166],
 			});
 		}
@@ -925,7 +927,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				let _ = state.select(model::Id(26));
 			}
 			let mut messaging = ui::MessagingUi::default();
-			if name_style.is_some() {
+			if styled {
 				messaging.cosmetics.name_styles = true;
 			}
 			if args.iter().any(|arg| arg == "--compact") {
