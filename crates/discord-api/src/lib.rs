@@ -1621,7 +1621,7 @@ impl DiscordApi {
 		reply
 			.into_page(
 				guild.is_none().then_some(channel),
-				maximum.map(model::Id),
+				if oldest { minimum } else { maximum }.map(model::Id),
 				oldest,
 			)
 			.map(client_core::search::Outcome::Page)
@@ -2641,7 +2641,7 @@ mod tests {
             let server=tokio::spawn(async move {
                 for (route,status,body) in [
                     ("/guilds/2/messages/search?content=%78%26%23%3F%2E%2E&limit=25&sort_by=timestamp&sort_order=desc","200 OK",r#"{"messages":[[{"id":"9","channel_id":"1","author":{"id":"3","username":"Synthetic"},"content":"match"}]],"total_results":1}"#),
-                    ("/channels/1/messages/search?content=%78&limit=25&sort_by=timestamp&sort_order=asc&min_id=9","200 OK",r#"{"messages":[],"total_results":0}"#),
+                    ("/channels/1/messages/search?content=%78&limit=25&sort_by=timestamp&sort_order=asc&min_id=9","200 OK",r#"{"messages":[[{"id":"10","channel_id":"1","author":{"id":"3","username":"Synthetic"},"content":"next"}]],"total_results":2}"#),
                     ("/guilds/2/messages/search?content=%78&limit=25&sort_by=timestamp&sort_order=desc&max_id=8&offset=25","200 OK",r#"{"messages":[],"total_results":50}"#),
                     ("/channels/1/messages/search?content=%78&limit=25&sort_by=timestamp&sort_order=desc&offset=9975","200 OK",r#"{"messages":[],"total_results":10000}"#),
                     ("/channels/1/messages/search?content=%78&limit=25&sort_by=timestamp&sort_order=desc&max_id=9&offset=25","200 OK",r#"{"messages":[[{"id":"9","channel_id":"1","author":{"id":"3","username":"Synthetic"},"content":"outside filter"}]],"total_results":50}"#),
@@ -2662,7 +2662,8 @@ mod tests {
             });
             let Event::Search {channel:Id(1),request:8,result:Ok(Outcome::Page(page))}=api.execute(Command::Search {channel:Id(1),guild:Some(Id(2)),query:"x&#?..".into(),before:None,offset:0,oldest:false,request:8}).await else {panic!()};
             assert_eq!(page.hits[0].id,Id(9));
-            assert!(matches!(api.search(Id(1),None,"x",Some(Id(9)),0,true).await,Ok(Outcome::Page(p)) if p.hits.is_empty()));
+            // Oldest first, the cursor is a lower bound: the next page holds newer IDs.
+            assert!(matches!(api.search(Id(1),None,"x",Some(Id(9)),0,true).await,Ok(Outcome::Page(p)) if p.hits.len()==1 && p.hits[0].id==Id(10)));
             assert!(matches!(api.search(Id(1),Some(Id(2)),"x before_id:8",Some(Id(9)),25,false).await,Ok(Outcome::Page(p)) if p.total == 50));
             assert!(matches!(api.search(Id(1),None,"x",None,9975,false).await,Ok(Outcome::Page(p)) if p.total == 10000));
             assert!(matches!(api.search(Id(1),None,"x before_id:9",None,25,false).await,Err(Failure::Protocol)));

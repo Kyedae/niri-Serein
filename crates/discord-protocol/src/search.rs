@@ -65,7 +65,7 @@ impl Reply {
 	pub fn into_page(
 		self,
 		channel: Option<Id>,
-		before: Option<Id>,
+		cursor: Option<Id>,
 		oldest: bool,
 	) -> Result<SearchPage, &'static str> {
 		let total = self.total_results.ok_or("Search result unavailable")?;
@@ -94,7 +94,7 @@ impl Reply {
 			partial: self.doing_deep_historical_index,
 			pin_cursor: None,
 		};
-		if !page.valid(channel, before, oldest) {
+		if !page.valid(channel, cursor, oldest) {
 			return Err("Invalid search results");
 		}
 		Ok(page)

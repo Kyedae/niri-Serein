@@ -129,10 +129,15 @@ impl SearchPage {
 	}
 	/// `channel` is `None` for a server-wide search, whose hits may come from any channel.
 	/// Hits follow the requested order: newest first, or oldest first.
-	pub fn valid(&self, channel: Option<Id>, before: Option<Id>, oldest: bool) -> bool {
+	/// A `cursor` page continues past that message: older ones newest first, newer ones oldest
+	/// first.
+	pub fn valid(&self, channel: Option<Id>, cursor: Option<Id>, oldest: bool) -> bool {
 		self.valid_hits(channel)
 			&& self.pin_cursor.is_none()
-			&& self.hits.iter().all(|h| before.is_none_or(|b| h.id < b))
+			&& self
+				.hits
+				.iter()
+				.all(|h| cursor.is_none_or(|c| if oldest { h.id > c } else { h.id < c }))
 			&& self.hits.windows(2).all(|w| {
 				if oldest {
 					w[0].id < w[1].id
