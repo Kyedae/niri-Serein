@@ -192,6 +192,16 @@ pub fn active_token(query: &str) -> Option<(usize, &'static str, &str)> {
 	None
 }
 
+/// `query` without a filter still being typed at its end. A finished `has:` value stays: it
+/// needs no suggestion to pick.
+pub fn without_partial(query: &str) -> &str {
+	match active_token(query) {
+		Some((_, "has", typed)) if HAS.contains(&typed) => query.trim(),
+		Some((start, _, _)) => query[..start].trim(),
+		None => query,
+	}
+}
+
 /// `has:` values in Discord's order. `forward` is sent as the service's `snapshot`.
 pub const HAS: [&str; 9] = [
 	"image", "video", "link", "file", "embed", "sound", "poll", "sticker", "forward",
@@ -687,7 +697,7 @@ fn choices(
 
 impl Draft {
 	pub fn new(query: &str) -> Self {
-		let query = active_token(query).map_or(query, |(start, _, _)| query[..start].trim());
+		let query = without_partial(query);
 		let date = |key| {
 			query
 				.split_whitespace()
@@ -954,5 +964,14 @@ mod tests {
 			assert_eq!(height(""), height("Search"));
 		})
 		.drop_without_applying_deltas();
+	}
+
+	/// "More filters" keeps a finished trailing `has:` and drops one still being typed.
+	#[test]
+	fn a_finished_has_filter_survives_and_a_partial_one_does_not() {
+		assert_eq!(super::without_partial("cats has:image"), "cats has:image");
+		assert_eq!(super::without_partial("cats has:ima"), "cats");
+		assert_eq!(super::without_partial("cats from:Rob"), "cats");
+		assert_eq!(super::Draft::new("has:image").query, "has:image");
 	}
 }

@@ -3451,7 +3451,8 @@ impl State {
 					// A short page of older messages is the conversation's start.
 					messages.len() < 50
 				} else if let Some(after) = self.history_after {
-					after.0 == 0
+					// A newer page extends the loaded window; it keeps a start already reached.
+					after.0 == 0 || (self.older_exhausted && !self.timeline.is_empty())
 				} else if self.history_targeted {
 					// A page fetched around a target can be short on its newer side, so it never
 					// proves the start; scrolling up loads older pages that do.

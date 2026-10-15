@@ -1575,7 +1575,13 @@ impl DiscordApi {
 			"content={encoded}&limit=25&sort_by=timestamp&sort_order={}",
 			if oldest { "asc" } else { "desc" }
 		));
-		let mut maximum = before.map(|id| id.0);
+		// The cursor continues past the previous page's last hit: older for newest-first,
+		// newer for oldest-first.
+		let (mut maximum, mut minimum) = if oldest {
+			(None, before.map(|id| id.0))
+		} else {
+			(before.map(|id| id.0), None)
+		};
 		for (key, value) in filters {
 			if key == "channel_id" && guild.is_none() {
 				return Err(Failure::Protocol);
@@ -1583,6 +1589,9 @@ impl DiscordApi {
 			if key == "max_id" {
 				let id = value.parse::<u64>().map_err(|_| Failure::Protocol)?;
 				maximum = Some(maximum.map_or(id, |current| current.min(id)));
+			} else if key == "min_id" {
+				let id = value.parse::<u64>().map_err(|_| Failure::Protocol)?;
+				minimum = Some(minimum.map_or(id, |current| current.max(id)));
 			} else {
 				let encoded: String = value.bytes().map(|b| format!("%{b:02X}")).collect();
 				path.push_str(&format!("&{key}={encoded}"));
@@ -1590,6 +1599,9 @@ impl DiscordApi {
 		}
 		if let Some(before) = maximum {
 			path.push_str(&format!("&max_id={before}"));
+		}
+		if let Some(after) = minimum {
+			path.push_str(&format!("&min_id={after}"));
 		}
 		if offset != 0 {
 			path.push_str(&format!("&offset={offset}"));
@@ -2629,7 +2641,7 @@ mod tests {
             let server=tokio::spawn(async move {
                 for (route,status,body) in [
                     ("/guilds/2/messages/search?content=%78%26%23%3F%2E%2E&limit=25&sort_by=timestamp&sort_order=desc","200 OK",r#"{"messages":[[{"id":"9","channel_id":"1","author":{"id":"3","username":"Synthetic"},"content":"match"}]],"total_results":1}"#),
-                    ("/channels/1/messages/search?content=%78&limit=25&sort_by=timestamp&sort_order=asc&max_id=9","200 OK",r#"{"messages":[],"total_results":0}"#),
+                    ("/channels/1/messages/search?content=%78&limit=25&sort_by=timestamp&sort_order=asc&min_id=9","200 OK",r#"{"messages":[],"total_results":0}"#),
                     ("/guilds/2/messages/search?content=%78&limit=25&sort_by=timestamp&sort_order=desc&max_id=8&offset=25","200 OK",r#"{"messages":[],"total_results":50}"#),
                     ("/channels/1/messages/search?content=%78&limit=25&sort_by=timestamp&sort_order=desc&offset=9975","200 OK",r#"{"messages":[],"total_results":10000}"#),
                     ("/channels/1/messages/search?content=%78&limit=25&sort_by=timestamp&sort_order=desc&max_id=9&offset=25","200 OK",r#"{"messages":[[{"id":"9","channel_id":"1","author":{"id":"3","username":"Synthetic"},"content":"outside filter"}]],"total_results":50}"#),

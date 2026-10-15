@@ -45,7 +45,8 @@ pub struct SearchUi {
 	relabel: bool,
 	search_anchor: Option<egui::Rect>,
 	suggestion_index: usize,
-	/// The last searches as typed, newest first; session only, like the rest of search.
+	/// The last searches as sent, with IDs rather than names, newest first; session only, like
+	/// the rest of search.
 	history: Vec<String>,
 	formats: crate::markdown::FormatCache,
 	/// Bounded message shells for the current page so the chat media renderers can draw hits.
@@ -295,13 +296,18 @@ impl SearchUi {
 		Ok(query)
 	}
 	fn submit(&mut self, state: &mut State, commands: &mut Vec<Command>) {
+		if let Ok(query) = self.wire(state) {
+			self.search(state, commands, query);
+		}
+	}
+	/// Searches for a wire `query`, as typed or as remembered in the history.
+	fn search(&mut self, state: &mut State, commands: &mut Vec<Command>, query: String) {
 		let trailing_separator = self.query.ends_with(char::is_whitespace);
-		if let Ok(query) = self.wire(state)
-			&& let Some(command) = state.request_search(query.clone(), None)
-		{
+		if let Some(command) = state.request_search(query.clone(), None) {
 			commands.push(command);
 			self.query = filters::display(&query, state, &mut self.labels);
-			self.remember(self.query.trim().to_owned());
+			// IDs, not names: two people can share a display name.
+			self.remember(query.trim().to_owned());
 			if trailing_separator {
 				self.query.push(' ');
 			}
@@ -322,10 +328,7 @@ impl SearchUi {
 		self.open && !self.pins && (self.pending_submit || state.search.is_some())
 	}
 	fn open_filters(&mut self, state: &State) {
-		let query = filters::active_token(&self.query)
-			.map_or(self.query.as_str(), |(start, _, _)| {
-				self.query[..start].trim()
-			});
+		let query = filters::without_partial(&self.query);
 		let query = filters::wire(query, state, &self.labels).unwrap_or_else(|_| query.to_owned());
 		self.filter_draft = Some(filters::Draft::new(&query));
 		self.filters_open = false;
@@ -341,6 +344,7 @@ impl SearchUi {
 			return;
 		}
 		let mut submit = false;
+		let mut repeat = None;
 		if let Some(draft) = &mut self.filter_draft {
 			match draft.show(ctx, state, avatars) {
 				filters::Action::Apply(query) => {
@@ -673,20 +677,19 @@ impl SearchUi {
 											},
 										);
 									});
-									let mut picked = None;
-									for query in &self.history {
-										if filters::suggestion_row(ui, "history", query, "")
+									for query in self.history.clone() {
+										let label =
+											filters::display(&query, state, &mut self.labels);
+										if filters::suggestion_row(ui, "history", &label, "")
 											.clicked()
 										{
-											picked = Some(query.clone());
+											repeat = Some(query);
 										}
 									}
 									if clear {
 										self.history.clear();
-									} else if let Some(query) = picked {
-										self.query = query;
+									} else if repeat.is_some() {
 										self.focus = true;
-										submit = state.can_search();
 									}
 								}
 							}
@@ -702,7 +705,12 @@ impl SearchUi {
 				self.filters_open = false;
 			}
 		}
-		if submit {
+		if let Some(query) = repeat {
+			// The remembered IDs are searched as they were; names could now mean someone else.
+			self.query.clear();
+			self.search(state, commands, query);
+			self.filters_open = false;
+		} else if submit {
 			if self.query.trim().is_empty() {
 				commands.push(state.clear_search());
 			} else {
@@ -2521,6 +2529,8 @@ mod tests {
 		let (commands, _) = frame(&mut view, &mut state, true);
 		let (query, oldest) = searched(&commands).expect("picking a user searches");
 		assert!(query.starts_with("from:") && !oldest, "{query}");
+		// History keeps the ID that was searched, not the name it shows.
+		assert_eq!(view.history[0], query.trim());
 		// has: — the type list, then an immediate search.
 		view.query = "has:".into();
 		view.filters_open = true;

@@ -235,7 +235,10 @@ mod tests {
 	/// Message headers read like Discord's: today, yesterday, then the short date.
 	#[test]
 	fn calendar_times_name_today_and_yesterday_and_date_older_messages() {
-		let now = time::OffsetDateTime::now_utc();
+		// A fixed noon keeps "today" and "yesterday" from crossing midnight mid-test.
+		let now =
+			time::OffsetDateTime::now_utc().replace_time(time::Time::from_hms(12, 0, 0).unwrap());
+		let _clock = super::pin_now(now);
 		assert!(super::calendar(now).starts_with("Today at "));
 		assert_eq!(super::header(now), super::clock(super::local(now)));
 		assert!(super::header(now - time::Duration::days(1)).starts_with("Yesterday at "));
