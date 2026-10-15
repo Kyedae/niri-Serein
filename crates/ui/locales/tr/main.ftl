@@ -4796,4 +4796,4 @@ time-format-24-hour = 24 saat
 profiles-status-edit = Durumu düzenle
 profiles-status-clear = Durumu temizle
 settings-cosmetics-name-styles = Ad stilleri
-settings-cosmetics-name-styles-description = Nitro görünen ad renkleri ve efektleri.
+settings-cosmetics-name-styles-description = Nitro görünen ad yazı tipleri, renkleri ve efektleri.

@@ -379,6 +379,7 @@ pub fn apply_custom(ctx: &Context, font: Option<&CustomFont>) {
 				.insert(0, name.into());
 		}
 	}
+	sync_name_families(&mut definitions);
 	ctx.set_fonts(definitions.clone());
 	ctx.request_repaint();
 }
@@ -508,16 +509,24 @@ fn add_name_font(definitions: &mut FontDefinitions, family: FontFamily, index: u
 	// Variable faces would otherwise draw their default instance; match the medium name weight.
 	data.tweak.coords = egui::epaint::text::VariationCoords::new([(b"wght", 500.0)]);
 	definitions.font_data.insert(name.into(), data.into());
-	let mut list = vec![name.to_owned()];
-	list.extend(
-		definitions
-			.families
-			.get(&FontFamily::Name(crate::design::MEDIUM.into()))
-			.into_iter()
-			.flatten()
-			.cloned(),
-	);
-	definitions.families.insert(family, list);
+	definitions.families.insert(family, vec![name.to_owned()]);
+	sync_name_families(definitions);
+}
+
+/// Each installed name family is its face followed by the current medium family, so a custom
+/// interface font that is set or removed later never leaves a name family pointing at it.
+fn sync_name_families(definitions: &mut FontDefinitions) {
+	let medium = definitions
+		.families
+		.get(&FontFamily::Name(crate::design::MEDIUM.into()))
+		.cloned()
+		.unwrap_or_default();
+	for (_, name, _) in NAME_FONTS {
+		if let Some(list) = definitions.families.get_mut(&FontFamily::Name(name.into())) {
+			list.truncate(1);
+			list.extend(medium.iter().cloned());
+		}
+	}
 }
 
 const CHECKED_JOBS: usize = 512;
@@ -816,6 +825,38 @@ mod tests {
 			assert_eq!(list[0], "Serein Name Bangers");
 			assert!(list.iter().any(|face| face == "Inter Medium"));
 			assert!(list.iter().any(|face| face == "Noto Sans Arabic"));
+			ui.label(egui::RichText::new("Synthetic name").family(family.clone()));
+		})
+		.drop_without_applying_deltas();
+	}
+
+	#[test]
+	fn name_families_follow_a_custom_font_that_is_set_then_removed() {
+		let ctx = Context::default();
+		install(&ctx);
+		for _ in 0..2 {
+			ctx.run_ui(Default::default(), |ui| {
+				name_family(ui.ctx(), 1);
+			})
+			.drop_without_applying_deltas();
+		}
+		let custom = CustomFont {
+			name: "Synthetic".into(),
+			data: FontData::from_static(INTER),
+		};
+		let family = FontFamily::Name("Serein Name Bangers".into());
+		apply_custom(&ctx, Some(&custom));
+		let list = ctx.fonts(|fonts| fonts.definitions().families[&family].clone());
+		assert_eq!(&list[..2], ["Serein Name Bangers", CUSTOM[1]]);
+		apply_custom(&ctx, None);
+		ctx.run_ui(Default::default(), |ui| {
+			let definitions = ui.fonts(|fonts| fonts.definitions().clone());
+			assert!(
+				definitions.families[&family]
+					.iter()
+					.all(|face| definitions.font_data.contains_key(face))
+			);
+			// Resolving the family panicked while it still named the removed custom font.
 			ui.label(egui::RichText::new("Synthetic name").family(family.clone()));
 		})
 		.drop_without_applying_deltas();

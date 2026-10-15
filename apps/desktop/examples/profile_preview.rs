@@ -734,7 +734,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 			user.cosmetics.get_or_insert_default().name_style = Some(model::NameStyle {
 				font: name_font.unwrap_or(0),
 				effect: model::NameEffect::from_id(effect),
-				colors: vec![0xff7ab8, 0x7a5cff, 0x34d6ff],
+				colors: vec![0xff7ab8, 0x7a5cff, 0x34d6ff, 0xffd166],
 			});
 		}
 	};
@@ -846,6 +846,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				prime_channel_link_replies(&mut state);
 			}
 			if page == "profile" {
+				if let Some(own) = state.user.as_mut() {
+					style_name(own);
+				}
 				prime_profile(&mut state);
 			}
 			if page == "member-tags" {
@@ -1039,7 +1042,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 			} else if page == "profile-card" {
 				state.demo = false;
 				state.gateway_connected = true;
-				let user = test_support::message(1, model::Id(20)).author;
+				let mut user = test_support::message(1, model::Id(20)).author;
+				style_name(&mut user);
 				state.members = Some(model::MemberList {
 					channel: model::Id(20),
 					guild: Some(model::Id(10)),

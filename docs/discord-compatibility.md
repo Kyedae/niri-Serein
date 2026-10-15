@@ -108,6 +108,7 @@ establish it.
   user's in that server. The shape and the font and effect ids come from the official web
   client's public JavaScript (October 15, 2026); this is unofficial and live delivery is
   unverified. One to four 0xRRGGBB colours are accepted; anything else drops the style.
+  Gradient effects spread every colour evenly across the name.
   Effects 1–8 (solid, gradient, neon, toon, pop, glow, prism, gummy) are drawn as still
   approximations: gradients across the name, and halo, outline or shadow layers behind it.
   Discord's animations are not reproduced. Fonts 1–16 except 7 use bundled OFL faces with
@@ -140,10 +141,10 @@ establish it.
   layers over it. The popout keeps the overflow on screen.
 
 Unknown palettes, layer kinds, anchors, malformed values and expired items are dropped
-without rejecting the user, member row or profile. Display-name styles and cosmetic
-editing are not supported. All four are opt-in: they stay hidden, unrequested and without
-catalog reads until enabled in Settings › Appearance › Profile cosmetics. This is a local
-display choice; nothing is sent to Discord.
+without rejecting the user, member row or profile. Cosmetic editing is not supported. All
+five are opt-in: they stay hidden, unrequested and without catalog reads until enabled in
+Settings › Appearance › Profile cosmetics. This is a local display choice; nothing is sent
+to Discord.
 
 ## Guild voice moderation — October 8, 2026
 

@@ -4812,4 +4812,4 @@ time-format-24-hour = 24-godzinny
 profiles-status-edit = Edytuj status
 profiles-status-clear = Wyczyść status
 settings-cosmetics-name-styles = Style nazw
-settings-cosmetics-name-styles-description = Kolory i efekty nazw wyświetlanych z Nitro.
+settings-cosmetics-name-styles-description = Czcionki, kolory i efekty nazw wyświetlanych z Nitro.

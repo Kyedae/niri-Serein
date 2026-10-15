@@ -4813,4 +4813,4 @@ time-format-24-hour = 24 horas
 profiles-status-edit = Editar estado
 profiles-status-clear = Borrar estado
 settings-cosmetics-name-styles = Estilos de nombre
-settings-cosmetics-name-styles-description = Colores y efectos de nombre de Nitro.
+settings-cosmetics-name-styles-description = Fuentes, colores y efectos de nombre de Nitro.

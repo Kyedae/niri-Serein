@@ -4908,4 +4908,4 @@ time-format-24-hour = 24 小時制
 profiles-status-edit = 編輯狀態
 profiles-status-clear = 清除狀態
 settings-cosmetics-name-styles = 名稱樣式
-settings-cosmetics-name-styles-description = Nitro 顯示名稱的顏色與特效。
+settings-cosmetics-name-styles-description = Nitro 顯示名稱的字型、顏色與特效。

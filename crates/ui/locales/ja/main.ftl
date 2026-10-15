@@ -4793,4 +4793,4 @@ time-format-24-hour = 24時間制
 profiles-status-edit = ステータスを編集
 profiles-status-clear = ステータスを消去
 settings-cosmetics-name-styles = 名前のスタイル
-settings-cosmetics-name-styles-description = Nitro の表示名の色とエフェクト。
+settings-cosmetics-name-styles-description = Nitro の表示名のフォント、色とエフェクト。

@@ -67,16 +67,23 @@ pub(crate) fn label(
 	let row = ui.fonts_mut(|fonts| fonts.row_height(&font));
 	let font = crate::fonts::name_family(ui.ctx(), style.font)
 		.map_or(font.clone(), |family| egui::FontId::new(font.size, family));
-	let layout = |ui: &Ui, colors| {
-		crate::role_names::galley(ui, text, font.clone(), colors, background, fallback, width)
-	};
 	// Colours never change the layout, so the plain galley sizes the allocation.
-	let plain = layout(ui, colors);
+	let plain =
+		crate::role_names::galley(ui, text, font.clone(), colors, background, fallback, width);
 	let (rect, mut response) = ui.allocate_exact_size(vec2(plain.size().x, row), sense);
 	// `contains_pointer` ignores the row or message widget that sits over the name.
 	let styled = always || ROW_HOVER.get() || response.contains_pointer();
 	let galley = if styled {
-		layout(ui, Some(self::colors(style)))
+		crate::role_names::gradient(
+			ui,
+			text,
+			font.clone(),
+			style.colors.first().copied(),
+			stops(style),
+			background,
+			fallback,
+			width,
+		)
 	} else {
 		plain
 	};
@@ -92,21 +99,13 @@ pub(crate) fn label(
 	response
 }
 
-/// The fill colours for a style, in the role-gradient form the name painter already draws.
-pub(crate) fn colors(style: &NameStyle) -> Colors {
-	let at = |index: usize| style.colors.get(index).copied();
-	let primary = style.colors[0];
+/// Gradient stops for a style: every colour for the gradient effects, none for solid ones.
+pub(crate) fn stops(style: &NameStyle) -> Option<&[u32]> {
 	match style.effect {
-		NameEffect::Gradient | NameEffect::Prism | NameEffect::Gummy => Colors {
-			primary,
-			secondary: at(1).or(Some(primary)),
-			tertiary: at(2),
-		},
-		_ => Colors {
-			primary,
-			secondary: None,
-			tertiary: None,
-		},
+		NameEffect::Gradient | NameEffect::Prism | NameEffect::Gummy if style.colors.len() >= 2 => {
+			Some(&style.colors)
+		}
+		_ => None,
 	}
 }
 
@@ -175,16 +174,10 @@ mod tests {
 
 	#[test]
 	fn gradients_use_every_colour_and_solid_effects_only_the_first() {
-		let gradient = colors(&style(
-			NameEffect::Gradient,
-			&[0x112233, 0x445566, 0x778899],
-		));
-		assert_eq!(
-			(gradient.primary, gradient.secondary, gradient.tertiary),
-			(0x112233, Some(0x445566), Some(0x778899))
-		);
-		let neon = colors(&style(NameEffect::Neon, &[0x112233, 0x445566]));
-		assert_eq!((neon.secondary, neon.tertiary), (None, None));
+		let four = [0x112233, 0x445566, 0x778899, 0xaabbcc];
+		assert_eq!(stops(&style(NameEffect::Gradient, &four)), Some(&four[..]));
+		assert_eq!(stops(&style(NameEffect::Gradient, &four[..1])), None);
+		assert_eq!(stops(&style(NameEffect::Neon, &four[..2])), None);
 	}
 
 	#[test]

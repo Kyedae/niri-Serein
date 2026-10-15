@@ -4896,4 +4896,4 @@ time-format-24-hour = 24hodinový
 profiles-status-edit = Upravit stav
 profiles-status-clear = Vymazat stav
 settings-cosmetics-name-styles = Styly jmen
-settings-cosmetics-name-styles-description = Barvy a efekty zobrazovaných jmen s Nitrem.
+settings-cosmetics-name-styles-description = Písma, barvy a efekty zobrazovaných jmen s Nitrem.
