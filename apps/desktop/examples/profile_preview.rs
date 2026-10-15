@@ -726,6 +726,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let theme_preview = args.iter().any(|arg| arg == "--theme-preview");
 	let thumbnail = args.iter().any(|arg| arg == "--thumbnail");
 	let extension = value("--extension=").map(str::to_owned);
+	let name_style = value("--name-style=").and_then(|id| id.parse::<u32>().ok());
+	let name_font = value("--name-font=").and_then(|id| id.parse::<u32>().ok());
+	// `--name-style=` and `--name-font=` give the previewed user a synthetic Nitro name style.
+	let style_name = |user: &mut model::User| {
+		if let Some(effect) = name_style {
+			user.cosmetics.get_or_insert_default().name_style = Some(model::NameStyle {
+				font: name_font.unwrap_or(0),
+				effect: model::NameEffect::from_id(effect),
+				colors: vec![0xff7ab8, 0x7a5cff, 0x34d6ff],
+			});
+		}
+	};
 	let card_status = value("--status=").map(str::to_owned);
 	let fixture = extension.as_deref().map(extension_fixture).transpose()?;
 	let saved = Arc::new(AtomicBool::new(false));
@@ -837,7 +849,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				prime_profile(&mut state);
 			}
 			if page == "member-tags" {
-				let user = test_support::message(1, model::Id(20)).author;
+				let mut user = test_support::message(1, model::Id(20)).author;
+				style_name(&mut user);
 				state.members = Some(model::MemberList {
 					channel: model::Id(20),
 					guild: Some(model::Id(10)),
@@ -907,6 +920,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				let _ = state.select(model::Id(26));
 			}
 			let mut messaging = ui::MessagingUi::default();
+			if name_style.is_some() {
+				messaging.cosmetics.name_styles = true;
+			}
 			if args.iter().any(|arg| arg == "--compact") {
 				messaging.apply_reading_preferences(
 					&cc.egui_ctx,
@@ -968,7 +984,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				// Synthetic cosmetics: the UI draws their artwork locally, offline. They are
 				// opt-in, so this page turns all four on.
 				messaging.cosmetics = model::CosmeticPreferences::SHOWN;
-				let user = test_support::message(1, model::Id(20)).author;
+				let mut user = test_support::message(1, model::Id(20)).author;
+				style_name(&mut user);
+				if let Some(own) = state.user.as_mut() {
+					style_name(own);
+				}
 				let mut offline = test_support::message(2, model::Id(20)).author;
 				offline.id = model::Id(3);
 				offline.name = "Sky (synthetic)".into();

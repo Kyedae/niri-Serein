@@ -103,6 +103,18 @@ establish it.
   Dark and light colors are those observed in the client. Offline member rows and muted
   DMs show only a 10% image until hovered. Nameplates appear in server member lists and
   the one-to-one DM list.
+- **Name styles (Nitro display-name styles):** `display_name_styles` on user and guild
+  member objects (`font_id`, `effect_id`, `colors`), with a member's value overriding the
+  user's in that server. The shape and the font and effect ids come from the official web
+  client's public JavaScript (October 15, 2026); this is unofficial and live delivery is
+  unverified. One to four 0xRRGGBB colours are accepted; anything else drops the style.
+  Effects 1–8 (solid, gradient, neon, toon, pop, glow, prism, gummy) are drawn as still
+  approximations: gradients across the name, and halo, outline or shadow layers behind it.
+  Discord's animations are not reproduced. Fonts 1–16 except 7 use bundled OFL faces with
+  the same family names (see `assets/README.md`); Néo-Castel (7), Hexagon (17), Default (11)
+  and unknown ids keep the interface font. The bundled files may differ from the builds
+  Discord serves. Chat, member and search rows show the colours and effect while the row is
+  hovered; profile cards and the account panel always show them.
 - **Profile effects and frames:** profile responses list them in `user_profile` and
   `guild_member_profile` `collectibles` (type 1 = effect, 3 = frame). The older
   `profile_effect.id` is accepted as the effect SKU, and a server profile's own values

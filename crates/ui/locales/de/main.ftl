@@ -4809,3 +4809,5 @@ time-format-12-hour = 12-Stunden
 time-format-24-hour = 24-Stunden
 profiles-status-edit = Status bearbeiten
 profiles-status-clear = Status löschen
+settings-cosmetics-name-styles = Namensstile
+settings-cosmetics-name-styles-description = Nitro-Farben und -Effekte für Anzeigenamen.

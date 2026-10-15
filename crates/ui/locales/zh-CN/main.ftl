@@ -4907,3 +4907,5 @@ time-format-12-hour = 12 小时制
 time-format-24-hour = 24 小时制
 profiles-status-edit = 编辑状态
 profiles-status-clear = 清除状态
+settings-cosmetics-name-styles = 名称样式
+settings-cosmetics-name-styles-description = Nitro 显示名称的颜色和特效。
