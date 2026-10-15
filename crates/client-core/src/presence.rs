@@ -1070,6 +1070,10 @@ mod tests {
 		);
 		assert!(!state.absent_presence_offline(recipient.id));
 		state.direct_presence_lossy = false;
+		apply(&mut state, Event::PermissionsChanged);
+		state.gateway_connected = true;
+		assert!(!state.absent_presence_offline(recipient.id));
+		state.direct_presence_lossy = false;
 		state.channels[0].recipients = (0..=MAX_DIRECT_PRESENCES as u64)
 			.map(|id| model::User {
 				id: Id(recipient.id.0 + id),

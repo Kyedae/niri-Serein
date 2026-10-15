@@ -2962,12 +2962,14 @@ pub fn show_with_session(
 		(None, None, [].as_slice(), model::ClientPlatforms::default())
 	} else {
 		let (status, custom, activities, clients) = presence(state, user.id, guild);
-		// A guild row without a status defers to the friend's or recipient's own presence.
-		let status = status.or_else(|| {
-			state
-				.presence_for(user.id)
-				.and_then(|p| p.status.as_deref())
-		});
+		// A guild row without a status defers to the friend's or recipient's own presence,
+		// with its platforms so the phone shows.
+		let (status, clients) = match (status, state.presence_for(user.id)) {
+			(None, Some(direct)) if direct.status.is_some() => {
+				(direct.status.as_deref(), direct.clients)
+			}
+			_ => (status, clients),
+		};
 		(
 			shown_status(state, user.id, status),
 			custom,

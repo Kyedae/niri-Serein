@@ -3815,6 +3815,8 @@ impl State {
 				self.cancel_invite_join();
 				self.cancel_guild_creation();
 				self.clear_direct_presences();
+				// Until the next READY, a missing record is unknown, not offline.
+				self.direct_presence_lossy = true;
 				self.permissions = permissions::Permissions::default();
 				self.read_state.cancel();
 				self.clear_profile();
