@@ -1,5 +1,16 @@
 # Local storage policy and audit
 
+## Game mention catalog (October 14, 2026)
+
+Game search retains a process-local catalog capped at 65,536 entries and 16 MiB of
+estimated container/name/icon allocations. The public list download is capped at 24 MiB,
+with one in-flight request and one result slot. JSON decoding runs off the UI and async
+workers. Names are limited to 128 bytes; icon hashes and IDs are validated. Search keeps
+at most 256 results and only paints visible popup rows. Unchanged game queries reuse
+their results rather than rescan the catalog each frame. There is no new catalog file or
+database schema. Icons use the existing bounded artwork worker/cache, and message drafts
+retain the original application-reference text through existing draft storage.
+
 ## GIF preview recovery (October 13, 2026)
 
 Failed GIF animation downloads show a still during the existing five-second backoff,
@@ -627,8 +638,10 @@ Retry saving is deliberate. Closing with pending/failed writes prompts before di
 In-app preview edits are not saved; a write already requested outside preview still completes.
 The standalone --demo does not start the SQLite worker. Narrow People overlays remain
 session-local. Normal window geometry is device-local in the bounded app_preferences singleton:
-two logical size integers (1..=16,384) and an optional physical position pair
-(-131,072..=131,072). It survives account logout and introduces no new file or table.
+two logical size integers (1..=16,384), an optional physical position pair
+(-131,072..=131,072) and a maximized boolean. While maximized, the normal size and position are
+kept so un-maximizing after a restart returns to them. It survives account logout and introduces
+no new file or table.
 Notification opt-in, hidden-channel visibility, primary RGB color, audio devices (up to 1,024 bytes each),
 input profile/custom processing, push-to-talk, gain, keyboard and mouse-button bindings and the global-keybind
 switch (enabled by default) are saved in the device-wide `app_preferences`
@@ -673,13 +686,19 @@ displayed conversation. No new disk data, database schema, worker or service req
 Resting the pointer on a conversation row, a rail DM or a server icon for 120 ms, or pressing it,
 requests that conversation's recent page early (a server icon uses the channel its click opens).
 It is the same bounded 50-message request a click sends, on its own connection slot so it never
-cancels the open conversation's reads, and it waits for the shared REST cooldown like any request.
+cancels the open conversation's reads. A preload never waits: it takes a REST permit only while
+three of the four are free and fails at once during the shared cooldown, so clicks keep two permits;
+a click that adopted such a preload sends its own request instead.
 At most one preload is in flight and at most twelve are sent per minute; a target is not requested
-again until its latest message changes, and failure or connection replacement forgets the attempt. A click on the
+again for five minutes unless its latest message changes, and failure, eviction of its preloaded
+window or connection replacement forgets the attempt. A click on the
 target while its page is less than 30 seconds old adopts that request instead of sending another, unless a live
 change to the channel arrived meanwhile; then the click sends its own request and the preloaded
 page is discarded. Otherwise the page is kept as one dormant window under the same eight-window,
-row and byte budget above, again only if no live change arrived while it was in flight. The open conversation, forums, archived
+row and byte budget above, again only if no live change arrived while it was in flight. Preloaded
+windows take at most three of the eight slots and are evicted before conversations the user opened.
+One stays current while the channel's latest known message is unchanged, also when that message
+was deleted and the page ends earlier. The open conversation, forums, archived
 threads, unreadable channels, channels without messages, an already current dormant window, the
 offline fixture and a pending conversation load are never preloaded. No disk data is written.
 
@@ -690,7 +709,8 @@ with the same server context and query, under the same one-in-flight and twelve-
 already cached or open, webhooks, and the offline fixture are skipped. Resting on the GIF button
 of a closed picker requests its home page (served from the existing ten-minute page cache when
 fresh) and the favorites sync once, and asks the image worker for the favorite preview, the first
-trending preview and the first eight category previews under the worker's existing bounds.
+trending preview and the first eight category previews under the worker's existing bounds. These
+previews are loaded but not played until the picker shows them.
 GIF home hover reads retain at most twelve timestamps and send at most twelve requests per
 minute, including failed/cleared-view retries. Cache hits consume no slot; explicit clicks and
 retries keep their normal behavior. Timestamp allocation is included in the GIF byte estimate.
@@ -739,7 +759,7 @@ The owner explicitly withdrew the no-storage policy on 2026-09-09. Local files, 
 | Discord token | OS credential store, service `cz.viceverse.serein`; packaged builds use account `discord-session` for the session restored on launch and `discord-session.<account id>` for each remembered account, while default source builds use the corresponding `discord-session.development` names; at most 2048 bytes each. A per-account entry is written once, when the roster records none, and rewritten only for a token the owner just supplied: on macOS every access to an existing entry is governed by that item's keychain ACL | Explicit logout / Forget saved login removes both entries for that build profile's account; forgetting or pruning a saved account removes its per-account entry; invalid-token expiry also requests deletion |
 | Remembered accounts (switcher) | `accounts` table in `client.sqlite3`: at most 8 rows of account ID, username, display name (64 bytes each), avatar hash, last-use timestamp and a flag recording whether the credential store holds that account's entry; no token | Logging out of, or forgetting, that account; the least recently used row is pruned past 8, taking its token and cached data with it |
 | History and drafts | `SEREIN_DATA_DIR/client.sqlite3` when an absolute override is set; otherwise `dirs::data_local_dir()/serein-development/client.sqlite3` for default source builds and `dirs::data_local_dir()/serein/client.sqlite3` for packaged builds | Clear cached history also clears service images and keeps drafts; logout clears the authenticated account’s history and drafts |
-| Messages | 500 per window, at most 20 stored channel windows globally, 48 MiB estimated text/metadata; SQLite main database capped at 64 MiB | Oldest touched channel evicted transactionally |
+| Messages | 500 per window, at most 20 stored channel windows globally, 48 MiB estimated text/metadata; SQLite main database capped at 64 MiB. A window that reaches its channel's first message also stores that message ID, so the channel introduction can show with the cached window | Oldest touched channel evicted transactionally, with its first-message ID |
 | Avatar, server-icon, profile-banner and message-preview PNGs | Account subdirectory beneath the selected application-data root's `avatars`; media defaults to 1 GiB / 4096 files per account (owner presets 256 MiB–4 GiB), shared artwork (emoji, badges, server tags and icons, role icons, decorations, nameplates) to 128 MiB / 4096 files in `artwork/` (presets 64–512 MiB), 90 days since last use by default (presets 7–365), at most 2 MiB per preview (512 KiB for icons/avatars) | Clear cache, per-partition clear in Settings › Storage, or account logout; versioned avatar/icon/banner keys and hashed media-source keys separate changed images |
 | Selected profile metadata | One session-memory record, at most 64 KiB; profile response body at most 256 KiB | Closing/changing the profile, session reset or logout; no SQLite profile table |
 | Explicit attachment downloads | User-selected destination, 1 byte through 100 MiB per original file; one active dialog/transfer; randomized sibling partial while writing | Cancel/error removes the partial when possible; completed downloads remain user-owned outside cache cleanup |
