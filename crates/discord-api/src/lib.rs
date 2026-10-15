@@ -1,6 +1,7 @@
 // Origin-fixed REST adapter. No cookies, redirects, logging, persistence or bot SDK.
 mod activity_sharing;
 mod archives;
+mod badges;
 mod channel_actions;
 mod collectibles;
 pub mod detectable;
@@ -51,6 +52,13 @@ use tokio::{
 	sync::{Mutex, Semaphore},
 	time::{Instant, sleep_until},
 };
+
+tokio::task_local! {
+	/// Set while a hover preload runs.
+	static SPECULATIVE: ();
+}
+/// REST permits a preload must leave free for requests the user is waiting for.
+const FOREGROUND_PERMITS: usize = 2;
 
 pub struct DiscordApi {
 	interaction_session: std::sync::Mutex<Option<zeroize::Zeroizing<String>>>,
@@ -191,6 +199,9 @@ fn api_client(route: &proxy::ApiProxy) -> Result<Client, Failure> {
 		.build()
 		.map_err(|_| Failure::ProtocolAt("API proxy connection unavailable"))
 }
+/// How long a profile card waits for its optional board-game names and collectible artwork;
+/// a card without them is still complete, so it opens rather than waiting on a slow read.
+const PROFILE_EXTRAS: Duration = Duration::from_millis(600);
 impl DiscordApi {
 	pub fn new(secret: Arc<SessionSecret>) -> Result<Self, Failure> {
 		Self::with_proxy(
@@ -339,15 +350,26 @@ impl DiscordApi {
 		{
 			return Err(Failure::Protocol);
 		}
-		let _permit = self
-			.requests
-			.acquire()
-			.await
-			.map_err(|_| Failure::Network)?;
+		let speculative = SPECULATIVE.try_with(|()| ()).is_ok();
+		let _permit = if speculative {
+			// A hover preload takes only spare capacity, so it never delays a click.
+			if self.requests.available_permits() <= FOREGROUND_PERMITS {
+				return Err(Failure::Capacity);
+			}
+			self.requests.try_acquire().map_err(|_| Failure::Capacity)?
+		} else {
+			self.requests
+				.acquire()
+				.await
+				.map_err(|_| Failure::Network)?
+		};
 		// Four permits bound concurrent REST work. A slow profile body must not hold the
 		// cooldown mutex and delay a message write; only service rate admission is shared.
 		loop {
 			let next = *self.cooldown.lock().await;
+			if speculative && Instant::now() < next {
+				return Err(Failure::Capacity);
+			}
 			sleep_until(next).await;
 			if Instant::now() >= *self.cooldown.lock().await {
 				break;
@@ -641,6 +663,40 @@ impl DiscordApi {
 		(guild.id.0 != 0)
 			.then_some(guild.id)
 			.ok_or(Failure::Ambiguous)
+	}
+	/// One bounded 50-message history page, before or after a cursor or at the latest message.
+	async fn history(
+		&self,
+		channel: Id,
+		before: Option<Id>,
+		after: Option<Id>,
+		request: u64,
+	) -> Event {
+		if before.is_some() && after.is_some() {
+			return Event::Failure(Failure::Protocol);
+		}
+		let mut path = format!("/channels/{channel}/messages?limit=50");
+		if let Some(before) = before {
+			path.push_str(&format!("&before={before}"));
+		}
+		if let Some(after) = after {
+			path.push_str(&format!("&after={after}"));
+		}
+		match self
+			.request(Method::GET, &path, None)
+			.await
+			.and_then(|bytes| decode::<Vec<MessageDto>>(&bytes).map_err(|_| Failure::Protocol))
+		{
+			Ok(messages) if messages.len() <= 50 => Event::History {
+				channel,
+				request,
+				older: before.is_some(),
+				messages: messages.into_iter().map(MessageDto::into_model).collect(),
+			},
+			Ok(_) => Event::Failure(Failure::Capacity),
+			Err(Failure::Forbidden) => Event::Unavailable(channel),
+			Err(f) => Event::Failure(f),
+		}
 	}
 	/// Runs one typed command and returns its typed event.
 	pub async fn execute(&self, command: Command) -> Event {
@@ -1154,18 +1210,29 @@ impl DiscordApi {
 					// or a shared service cooldown. Dropping these reads is safe: they never write.
 					let effect = profile.effect_sku.filter(|_| cosmetics.effects);
 					let frame = profile.frame_sku.filter(|_| cosmetics.frames);
-					let (board, catalog) = tokio::join!(
+					let (board, catalog, badges) = tokio::join!(
 						tokio::time::timeout(
-							Duration::from_secs(2),
+							PROFILE_EXTRAS,
 							self.load_profile_board_games(&mut profile),
 						),
 						tokio::time::timeout(
-							Duration::from_secs(2),
+							PROFILE_EXTRAS,
 							self.load_profile_collectibles(effect, frame),
+						),
+						// Only the account's own profile is requested without mutuals.
+						tokio::time::timeout(
+							Duration::from_secs(2),
+							self.load_badge_catalog(user, !with_mutuals)
 						),
 					);
 					if let Ok(result) = board {
 						result?;
+					}
+					if let Ok(result) = badges {
+						profile.badge_catalog = result?.map(Box::new);
+						if !profile.valid() {
+							profile.badge_catalog = None;
+						}
 					}
 					if let Ok(result) = catalog {
 						let (effect, frame) = result?;
@@ -1187,6 +1254,10 @@ impl DiscordApi {
 					result,
 				}
 			}
+			Command::BadgeSettings { request, settings } => Event::BadgeSettings {
+				request,
+				result: self.save_badge_settings(settings).await,
+			},
 			Command::StreamPreview {
 				guild,
 				channel,
@@ -1224,33 +1295,11 @@ impl DiscordApi {
 				before,
 				after,
 				request,
-			} => {
-				if before.is_some() && after.is_some() {
-					return Event::Failure(Failure::Protocol);
-				}
-				let mut path = format!("/channels/{channel}/messages?limit=50");
-				if let Some(before) = before {
-					path.push_str(&format!("&before={before}"));
-				}
-				if let Some(after) = after {
-					path.push_str(&format!("&after={after}"));
-				}
-				match self
-					.request(Method::GET, &path, None)
-					.await
-					.and_then(|bytes| {
-						decode::<Vec<MessageDto>>(&bytes).map_err(|_| Failure::Protocol)
-					}) {
-					Ok(messages) if messages.len() <= 50 => Event::History {
-						channel,
-						request,
-						older: before.is_some(),
-						messages: messages.into_iter().map(MessageDto::into_model).collect(),
-					},
-					Ok(_) => Event::Failure(Failure::Capacity),
-					Err(Failure::Forbidden) => Event::Unavailable(channel),
-					Err(f) => Event::Failure(f),
-				}
+			} => self.history(channel, before, after, request).await,
+			// The same request a click sends, but it gives way: without spare capacity or during
+			// a cooldown it fails with Capacity at once, and a click that adopted it sends its own.
+			Command::Prefetch(command) => {
+				Box::pin(SPECULATIVE.scope((), self.execute(*command))).await
 			}
 			Command::StickerPacks => Event::StickerPacks(
 				self.request_limited(
@@ -1836,6 +1885,45 @@ mod tests {
 		}
 	}
 
+	#[tokio::test]
+	async fn preloads_give_way_to_clicks_instead_of_waiting() {
+		let api = DiscordApi::new(Arc::new(
+			SessionSecret::from_owner_input("SYNTHETIC_PRELOAD_TOKEN".into()).unwrap(),
+		))
+		.unwrap();
+		let preload = || {
+			Command::Prefetch(Box::new(Command::History {
+				channel: model::Id(21),
+				before: None,
+				after: None,
+				request: 1 << 63,
+			}))
+		};
+		let gave_way = |event: Event| {
+			matches!(
+				event,
+				Event::Failure(Failure::Capacity)
+					| Event::HistoryFailed {
+						failure: Failure::Capacity,
+						..
+					}
+			)
+		};
+		// During a service cooldown a preload fails at once instead of waiting it out.
+		*api.cooldown.lock().await = Instant::now() + Duration::from_secs(30);
+		let event = tokio::time::timeout(Duration::from_secs(1), api.execute(preload()))
+			.await
+			.expect("a preload never waits for the cooldown");
+		assert!(gave_way(event));
+		// Without spare permits it leaves the remaining ones to requests the user waits for.
+		*api.cooldown.lock().await = Instant::now();
+		let _held = api.requests.acquire_many(2).await.unwrap();
+		let event = tokio::time::timeout(Duration::from_secs(1), api.execute(preload()))
+			.await
+			.expect("a preload never waits for a permit");
+		assert!(gave_way(event));
+		assert_eq!(api.requests.available_permits(), FOREGROUND_PERMITS);
+	}
 	#[tokio::test]
 	async fn guild_creation_posts_once_and_waits_for_gateway_state() {
 		use tokio::{
@@ -2759,6 +2847,61 @@ mod tests {
         }).await.unwrap();
 	}
 	#[tokio::test]
+	async fn optional_badge_capacity_preserves_profiles_but_expiry_ends_session() {
+		tokio::time::timeout(Duration::from_secs(5), async {
+			for case in 0..3 {
+				let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+				let mut api = DiscordApi::new(Arc::new(
+					SessionSecret::from_owner_input("SYNTHETIC_BADGE_TOKEN".into()).unwrap(),
+				))
+				.unwrap();
+				api.base = format!("http://{}", listener.local_addr().unwrap());
+				let server = tokio::spawn(async move {
+					let (mut stream, _) = listener.accept().await.unwrap();
+					let mut buffer = [0; 4096];
+					let n = stream.read(&mut buffer).await.unwrap();
+					assert!(std::str::from_utf8(&buffer[..n]).unwrap().starts_with("GET /users/5/profile?"));
+					let body = r#"{"user":{"id":"5","username":"Synthetic"},"badges":[{"id":"premium","description":"Subscriber"}]}"#;
+					stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+					let (mut stream, _) = listener.accept().await.unwrap();
+					let n = stream.read(&mut buffer).await.unwrap();
+					assert!(std::str::from_utf8(&buffer[..n]).unwrap().starts_with("GET /users/5/badges HTTP/1.1"));
+					let header = match case {
+						0 => format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", discord_protocol::badges::MAX_CATALOG_WIRE + 1),
+						1 => "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".into(),
+						_ => "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into(),
+					};
+					stream.write_all(header.as_bytes()).await.unwrap();
+					if case == 1 {
+						// The reader may close the socket as soon as the streaming bound is hit.
+						let _ = stream.write_all(&vec![b' '; discord_protocol::badges::MAX_CATALOG_WIRE + 1]).await;
+					}
+				});
+				let event = api.execute(Command::Profile {
+					user: model::Id(5),
+					guild: None,
+					request: 1,
+					with_mutuals: true,
+					cosmetics: Default::default(),
+				}).await;
+				if case == 2 {
+					assert!(matches!(event, Event::Profile { result: Err(Failure::Expired), .. }));
+					assert!(api.stopped());
+				} else {
+					let Event::Profile { result: Ok(profile), .. } = event else {
+						panic!("oversized optional catalog must preserve the profile");
+					};
+					assert!(profile.badge_catalog.is_none());
+					assert_eq!(profile.badges.len(), 1);
+					assert_eq!(profile.badges[0].id, "premium");
+					assert!(!api.stopped());
+				}
+				server.await.unwrap();
+			}
+		}).await.unwrap();
+	}
+
+	#[tokio::test]
 	async fn profiles_are_scoped_capped_and_do_not_block_message_writes() {
 		let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
 		let mut api = DiscordApi::new(Arc::new(
@@ -2810,6 +2953,25 @@ mod tests {
 				.unwrap();
 			server_release.notified().await;
 			profile.write_all(body.as_bytes()).await.unwrap();
+			// The optional badge catalog follows the profile body.
+			let (mut catalog, _) = listener.accept().await.unwrap();
+			let n = catalog.read(&mut buffer).await.unwrap();
+			assert!(
+				std::str::from_utf8(&buffer[..n])
+					.unwrap()
+					.starts_with("GET /users/5/badges HTTP/1.1")
+			);
+			let badges = r#"{"badges":[{"badge_id":18,"name":"Account Age","owned":true}]}"#;
+			catalog
+				.write_all(
+					format!(
+						"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{badges}",
+						badges.len()
+					)
+					.as_bytes(),
+				)
+				.await
+				.unwrap();
 			for response in [
 				format!(
 					"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -2857,15 +3019,22 @@ mod tests {
 		.unwrap();
 		assert!(matches!(sent, Event::SendResult { result: Ok(_), .. }));
 		release.notify_one();
-		assert!(matches!(
-			pending.await.unwrap(),
-			Event::Profile {
-				user: model::Id(5),
-				guild: Some(model::Id(2)),
-				request: 9,
-				result: Ok(_)
-			}
-		));
+		let Event::Profile {
+			user: model::Id(5),
+			guild: Some(model::Id(2)),
+			request: 9,
+			result: Ok(profile),
+		} = pending.await.unwrap()
+		else {
+			panic!("profile expected");
+		};
+		assert_eq!(
+			profile
+				.badge_catalog
+				.as_ref()
+				.map(|catalog| catalog.badges.len()),
+			Some(1)
+		);
 		assert!(matches!(
 			api.execute(Command::Profile {
 				user: model::Id(5),

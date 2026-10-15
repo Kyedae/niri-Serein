@@ -609,7 +609,7 @@ fn starter_row(
 							);
 							let time = timestamp(message.id);
 							ui.label(
-								RichText::new(format!("{:02}:{:02}", time.hour(), time.minute()))
+								RichText::new(crate::local_time::clock(time))
 									.size(12.0)
 									.color(colors.muted),
 							)
@@ -681,9 +681,19 @@ fn history_complete(state: &State) -> bool {
 		&& state.older_exhausted
 }
 
+/// A cached window shown while its first network page loads, already known to reach the start.
+fn cached_start(state: &State) -> bool {
+	state.freshness == model::Freshness::Loading
+		&& state.history_pending
+		&& !state.history_targeted
+		&& state.history_after.is_none()
+		&& state.older_exhausted
+		&& state.timeline.row_count() != 0
+}
+
 fn intro(state: &State, empty: bool) -> Option<Intro> {
 	let channel = state.selected.and_then(|id| state.channel(id))?;
-	if !history_complete(state) {
+	if !history_complete(state) && !cached_start(state) {
 		return None;
 	}
 	let named = |post| Intro::Channel {
@@ -1837,7 +1847,7 @@ fn show_system(
 			ui.add_space(8.0);
 			let stamp = ui
 				.label(
-					RichText::new(format!("{:02}:{:02}", time.hour(), time.minute()))
+					RichText::new(crate::local_time::clock(time))
 						.size(12.0)
 						.color(colors.muted),
 				)
@@ -1942,7 +1952,7 @@ impl TimelineView {
 		let more =
 			read_through.is_none() && first_loaded && !marker_loaded && !state.older_exhausted;
 		let at = timestamp(start);
-		let clock = format!("{:02}:{:02}", at.hour(), at.minute());
+		let clock = crate::local_time::clock(at);
 		let time = if at.date() == crate::local_time::now().date() {
 			clock
 		} else {
@@ -3091,13 +3101,9 @@ impl TimelineView {
 										|ui| {
 											let time = ui
 												.label(
-													RichText::new(format!(
-														"{:02}:{:02}",
-														time.hour(),
-														time.minute()
-													))
-													.size(12.0)
-													.color(colors.muted),
+													RichText::new(crate::local_time::clock(time))
+														.size(12.0)
+														.color(colors.muted),
 												)
 												.on_hover_text_with(|| format!("{} UTC", time));
 											surface.exclude(time.rect);
@@ -3218,10 +3224,8 @@ impl TimelineView {
 												let time = timestamp(id);
 												let time = ui
 													.label(
-														RichText::new(format!(
-															"{:02}:{:02}",
-															time.hour(),
-															time.minute()
+														RichText::new(crate::local_time::clock(
+															time,
 														))
 														.size(12.0)
 														.color(colors.muted),
@@ -3415,6 +3419,7 @@ impl TimelineView {
 													profile,
 													state,
 													crate::design::MessageCardSurface::Conversation,
+													self.hide_media_links,
 												) {
 													self.gif_favorite = Some(gif);
 												}
@@ -3825,7 +3830,7 @@ impl TimelineView {
 							ui.painter().text(
 								rect.center(),
 								egui::Align2::CENTER_CENTER,
-								format!("{:02}:{:02}", time.hour(), time.minute()),
+								crate::local_time::clock(time),
 								egui::FontId::proportional(11.0),
 								colors.muted,
 							);
@@ -8086,13 +8091,15 @@ mod tests {
 		settle_banner(&ctx, &mut view, &mut state);
 		expect_read_on_open(&mut view, 201, "channel switch");
 
+		// An untouched return reopens without a request; new activity makes it unread again.
+		live_message(&mut state, Id(10), 102);
 		assert!(matches!(
 			state.select(Id(10)),
 			Some(client_core::Command::History { .. })
 		));
-		deliver_unread(&mut state, Id(10), 101);
+		deliver_unread(&mut state, Id(10), 103);
 		settle_banner(&ctx, &mut view, &mut state);
-		expect_read_on_open(&mut view, 101, "channel return");
+		expect_read_on_open(&mut view, 103, "channel return");
 
 		assert!(matches!(
 			state.select_guild(Id(2)),
@@ -8105,6 +8112,7 @@ mod tests {
 		settle_banner(&ctx, &mut view, &mut state);
 		expect_read_on_open(&mut view, 301, "server open");
 
+		live_message(&mut state, Id(10), 104);
 		assert!(matches!(
 			state.select_guild(Id(1)),
 			Some(client_core::Command::History {
@@ -8112,9 +8120,16 @@ mod tests {
 				..
 			})
 		));
-		deliver_unread(&mut state, Id(10), 101);
+		deliver_unread(&mut state, Id(10), 105);
 		settle_banner(&ctx, &mut view, &mut state);
-		expect_read_on_open(&mut view, 101, "server return");
+		expect_read_on_open(&mut view, 105, "server return");
+	}
+
+	fn live_message(state: &mut State, channel: Id, id: u64) {
+		state.apply(client_core::Envelope {
+			generation: state.generation,
+			event: client_core::Event::Message(test_support::message(id, channel)),
+		});
 	}
 
 	#[test]
@@ -9138,6 +9153,8 @@ mod tests {
 				}
 			}
 			for channel in [Id(20), Id(21), Id(20)] {
+				// A newer message known from channel metadata makes the cached window revalidate.
+				state.observe_last_message(channel, Id(1000 * channel.0 + count));
 				assert!(matches!(
 					state.select(channel),
 					Some(client_core::Command::History { .. })
@@ -9389,6 +9406,8 @@ mod tests {
 					view.rows.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
 					vec![INTRO, Id(900)]
 				);
+				// A newer message known from channel metadata makes the window a preview to revalidate.
+				state.observe_last_message(Id(20), Id(600));
 				assert!(matches!(
 					state.select(Id(20)),
 					Some(client_core::Command::History {
@@ -10096,6 +10115,7 @@ mod tests {
 						..Default::default()
 					},
 					crate::design::MessageCardSurface::Conversation,
+					false,
 				);
 				assert!(
 					ui.min_rect().height() > 120.0,
