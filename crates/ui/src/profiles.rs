@@ -1036,17 +1036,46 @@ fn presence_badge_metrics(rect: Rect) -> (f32, f32, egui::Pos2) {
 	};
 	(radius, ring, rect.right_bottom() - Vec2::splat(inset))
 }
-fn presence_badge_rect(rect: Rect) -> Rect {
+/// Like Discord, the phone shows only for someone online from a phone.
+fn shows_phone(status: &str, clients: model::ClientPlatforms) -> bool {
+	clients.mobile && status == "online"
+}
+/// The phone stands taller than the status disc, centred a little above it.
+fn phone_body(center: egui::Pos2, radius: f32) -> Rect {
+	Rect::from_center_size(
+		center - vec2(0.0, radius * 0.3),
+		vec2(radius * 1.8, radius * 3.0),
+	)
+}
+fn presence_badge_rect(rect: Rect, mobile: bool) -> Rect {
 	let (radius, ring, center) = presence_badge_metrics(rect);
-	Rect::from_center_size(center, Vec2::splat((radius + ring) * 2.0))
+	let disc = Rect::from_center_size(center, Vec2::splat((radius + ring) * 2.0));
+	if mobile {
+		disc.union(phone_body(center, radius).expand(ring))
+	} else {
+		disc
+	}
 }
-fn pointer_on_presence(status: Option<&str>, avatar: Rect, pointer: Option<egui::Pos2>) -> bool {
-	status.is_some() && pointer.is_some_and(|pos| presence_badge_rect(avatar).contains(pos))
+fn pointer_on_presence(
+	status: Option<&str>,
+	clients: model::ClientPlatforms,
+	avatar: Rect,
+	pointer: Option<egui::Pos2>,
+) -> bool {
+	status.is_some_and(|status| {
+		pointer.is_some_and(|pos| {
+			presence_badge_rect(avatar, shows_phone(status, clients)).contains(pos)
+		})
+	})
 }
-/// Discord sends no presence for someone offline, so once connected an absent status is shown
-/// as offline. While disconnected nobody's status is known, and none is shown.
-pub(crate) fn shown_status<'a>(state: &State, status: Option<&'a str>) -> Option<&'a str> {
-	status.or_else(|| state.gateway_connected.then_some("offline"))
+/// Discord sends no presence for an offline friend or DM recipient, so theirs reads offline
+/// while the client knows it would have one. Anyone else without a presence shows none.
+pub(crate) fn shown_status<'a>(
+	state: &State,
+	user: Id,
+	status: Option<&'a str>,
+) -> Option<&'a str> {
+	status.or_else(|| state.absent_presence_offline(user).then_some("offline"))
 }
 pub(crate) fn presence_badge(
 	ui: &mut egui::Ui,
@@ -1056,8 +1085,7 @@ pub(crate) fn presence_badge(
 	ring: Color32,
 ) {
 	let (radius, ring_width, center) = presence_badge_metrics(rect);
-	// Like Discord, the phone shows only for someone online from a phone.
-	let mobile = clients.mobile && status == "online";
+	let mobile = shows_phone(status, clients);
 	paint_status(
 		ui.painter(),
 		center,
@@ -1066,7 +1094,7 @@ pub(crate) fn presence_badge(
 		mobile,
 		(ring, ring_width),
 	);
-	ui.allocate_rect(presence_badge_rect(rect), egui::Sense::hover())
+	ui.allocate_rect(presence_badge_rect(rect, mobile), egui::Sense::hover())
 		.on_hover_text(presence_label(status));
 }
 
@@ -1084,8 +1112,8 @@ pub(crate) fn paint_status(
 	let color = presence_color(status);
 	if mobile {
 		// Discord's phone: a 3:5 rounded body, a large screen and a round home button.
-		let (width, height) = (radius * 1.8, radius * 3.0);
-		let body = Rect::from_center_size(center - vec2(0.0, radius * 0.3), vec2(width, height));
+		let body = phone_body(center, radius);
+		let (width, height) = (body.width(), body.height());
 		let corner = width * 0.2;
 		painter.rect_filled(body.expand(ring_width), corner + ring_width, ring);
 		painter.rect_filled(body, corner, color);
@@ -2933,7 +2961,13 @@ pub fn show_with_session(
 	let (status, custom, activities, clients) = if user.webhook {
 		(None, None, [].as_slice(), model::ClientPlatforms::default())
 	} else {
-		presence(state, user.id, guild)
+		let (status, custom, activities, clients) = presence(state, user.id, guild);
+		(
+			shown_status(state, user.id, status),
+			custom,
+			activities,
+			clients,
+		)
 	};
 	let in_voice = !user.webhook && user_in_voice(state, user.id);
 	let dm_channel = state
@@ -3090,6 +3124,7 @@ pub fn show_with_session(
 		);
 		let pointer_on_presence = pointer_on_presence(
 			status,
+			clients,
 			avatar_rect,
 			ui.input(|input| input.pointer.hover_pos()),
 		);
@@ -5574,11 +5609,21 @@ mod tests {
 	}
 
 	#[test]
-	fn absent_presence_reads_as_offline_only_while_connected() {
-		let mut state = State::default();
-		assert_eq!(shown_status(&state, None), None);
-		state.gateway_connected = true;
-		assert_eq!(shown_status(&state, None), Some("offline"));
-		assert_eq!(shown_status(&state, Some("idle")), Some("idle"));
+	fn a_stranger_without_presence_shows_no_status() {
+		let state = State {
+			gateway_connected: true,
+			..State::default()
+		};
+		assert_eq!(shown_status(&state, Id(7), None), None);
+		assert_eq!(shown_status(&state, Id(7), Some("idle")), Some("idle"));
+	}
+
+	#[test]
+	fn phone_badge_hover_covers_the_whole_phone() {
+		let avatar = Rect::from_min_size(pos2(0.0, 0.0), Vec2::splat(32.0));
+		let (radius, ring, center) = presence_badge_metrics(avatar);
+		let top = pos2(center.x, phone_body(center, radius).top() - ring * 0.5);
+		assert!(!presence_badge_rect(avatar, false).contains(top));
+		assert!(presence_badge_rect(avatar, true).contains(top));
 	}
 }

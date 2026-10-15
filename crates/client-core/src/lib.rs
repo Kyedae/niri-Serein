@@ -762,6 +762,9 @@ pub struct State {
 	pub direct_presence_bytes: Option<(usize, usize)>,
 	#[doc(hidden)]
 	pub direct_presence_epoch: u64,
+	/// A direct presence was dropped or evicted since the store was last cleared.
+	#[doc(hidden)]
+	pub direct_presence_lossy: bool,
 	pub member_request: u64,
 	pub guilds: Vec<Guild>,
 	pub channels: Vec<Channel>,
@@ -977,6 +980,7 @@ impl Default for State {
 			local_game_activity: Default::default(),
 			direct_presence_bytes: None,
 			direct_presence_epoch: 0,
+			direct_presence_lossy: false,
 			member_request: 0,
 			guilds: vec![],
 			channels: vec![],
@@ -2515,6 +2519,8 @@ impl State {
 		if let Event::DirectPresence(updates) = &envelope.event {
 			if envelope.event.bytes() <= MAX_MEMBER_PRESENCE_BYTES {
 				self.apply_direct_presence(updates);
+			} else {
+				self.direct_presence_lossy = true;
 			}
 			return;
 		}

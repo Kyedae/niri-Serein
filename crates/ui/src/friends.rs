@@ -597,9 +597,8 @@ impl MessagingUi {
 								} else {
 									let (status, custom, activities, clients) =
 										profiles::presence(state, user.id, None);
-									// No presence while connected means offline, as on Discord.
 									(
-										profiles::shown_status(state, status),
+										profiles::shown_status(state, user.id, status),
 										custom,
 										activities,
 										clients,
