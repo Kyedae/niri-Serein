@@ -4795,3 +4795,5 @@ time-format-12-hour = 12 saat
 time-format-24-hour = 24 saat
 profiles-status-edit = Durumu düzenle
 profiles-status-clear = Durumu temizle
+profiles-private-profile = Gizli Profil
+profiles-private-notice = { $name } adlı kullanıcının profili gizli, bu yüzden bazı bilgiler saklı. Daha fazlasını görmek için arkadaş olarak ekle.

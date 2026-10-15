@@ -4900,3 +4900,5 @@ game-mentions-header = GAMES MATCHING @{ $query }
 game-mentions-unavailable = Games are unavailable.
 game-mentions-empty = No matching games.
 game-mentions-retry = Retry
+profiles-private-profile = Private Profile
+profiles-private-notice = { $name }’s profile is private, so some info is hidden. Add them as a friend to see more.

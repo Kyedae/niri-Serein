@@ -689,6 +689,7 @@ mod tests {
 			effect: None,
 			frame: None,
 			badge_catalog: None,
+			private: false,
 			limited: false,
 		})
 	}
@@ -1240,6 +1241,7 @@ mod tests {
 					effect: None,
 					frame: None,
 					badge_catalog: None,
+					private: false,
 					limited: false,
 				})
 			}
@@ -1428,6 +1430,7 @@ mod tests {
 					effect: None,
 					frame: None,
 					badge_catalog: None,
+					private: false,
 					limited: false,
 				})
 			};

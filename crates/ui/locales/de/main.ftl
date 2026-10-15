@@ -4809,3 +4809,5 @@ time-format-12-hour = 12-Stunden
 time-format-24-hour = 24-Stunden
 profiles-status-edit = Status bearbeiten
 profiles-status-clear = Status löschen
+profiles-private-profile = Privates Profil
+profiles-private-notice = Das Profil von { $name } ist privat, daher sind manche Infos verborgen. Füge die Person als Freund hinzu, um mehr zu sehen.
