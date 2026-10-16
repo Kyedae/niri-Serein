@@ -1230,9 +1230,17 @@ impl State {
 					// A profile preload in flight may carry the old friendship's view.
 					self.preload.profiles.touch(None);
 				}
+				let open = self
+					.profile
+					.as_ref()
+					.map(|view| view.user)
+					.filter(|user| changed(user));
 				self.profile_cache.retain_users(|user| {
 					previous.contains_key(&user) == friends.contains_key(&user)
 				});
+				if let Some(user) = open {
+					self.refresh_open_profile(user);
+				}
 				return result;
 			}
 			Event::Friend {
@@ -1240,10 +1248,13 @@ impl State {
 				friend,
 				profile,
 			} => {
-				// Profile Privacy depends on friendship, so a cached or preloading profile may now
-				// be stale.
-				self.profile_cache.forget(user);
-				self.preload.profiles.touch(None);
+				// Profile Privacy depends on friendship, so a cached, preloading or open profile may
+				// now be stale.
+				if self.user_actions.friends.contains_key(&user) != friend {
+					self.profile_cache.forget(user);
+					self.preload.profiles.touch(None);
+					self.refresh_open_profile(user);
+				}
 				if let Some((Action::ProfileFriend { user: target, .. }, _, observed)) =
 					&mut self.user_actions.pending
 					&& *target == user

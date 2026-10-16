@@ -585,6 +585,24 @@ impl State {
 		let (user, guild) = self.profile.as_ref().map(|view| (view.user, view.guild))?;
 		self.request_profile(user, guild)
 	}
+	/// Friendship decides what a private profile shows, so an open card of `user` is requested
+	/// again; its new request id also makes an in-flight response for the old friendship stale.
+	pub(crate) fn refresh_open_profile(&mut self, user: Id) {
+		if self.demo || self.auth != AuthState::Authenticated || !self.gateway_connected {
+			return;
+		}
+		let Some(guild) = self
+			.profile
+			.as_ref()
+			.filter(|view| view.user == user)
+			.map(|view| view.guild)
+		else {
+			return;
+		};
+		if let Some(command) = self.request_profile(user, guild) {
+			self.preload.profile_retry = Some(command);
+		}
+	}
 	pub fn clear_profile(&mut self) -> Command {
 		self.cancel_user_note_read();
 		self.profile_request = self.profile_request.wrapping_add(1);
@@ -792,6 +810,14 @@ mod tests {
 	fn a_friendship_change_discards_an_adopted_profile_preload() {
 		let now = Instant::now();
 		let mut state = own_state();
+		let mut friend = own_data("Friend").user;
+		friend.id = Id(2);
+		state
+			.apply_user_action(crate::user_actions::Event::Friends(Some(vec![(
+				friend,
+				"friend".into(),
+			)])))
+			.unwrap();
 		let Some(Command::Prefetch(command)) =
 			state.preload_profile(None, Some((Id(2), None)), now)
 		else {
@@ -809,15 +835,25 @@ mod tests {
 				profile: None,
 			})
 			.unwrap();
+		let mut retries = state.take_preload_retries().collect::<Vec<_>>();
 		let mut data = own_data("Former friend");
 		data.user.id = Id(2);
 		state.apply_profile(Id(2), None, request, Ok(data));
+		retries.extend(state.take_preload_retries());
 		let view = state.profile.as_ref().unwrap();
 		assert!(view.data.is_none(), "the outdated preload is not shown");
-		assert!(matches!(
-			state.take_preload_retries().collect::<Vec<_>>().as_slice(),
-			[Command::Profile { user: Id(2), .. }]
-		));
+		// The open card asks again exactly once, under the new friendship.
+		let [
+			Command::Profile {
+				user: Id(2),
+				request,
+				..
+			},
+		] = retries.as_slice()
+		else {
+			panic!("{}", retries.len())
+		};
+		assert_eq!(*request, view.request);
 		assert!(!state.profile_cache.contains(Id(2), None, now));
 	}
 
@@ -920,6 +956,14 @@ mod tests {
 	fn a_friendship_change_drops_the_cached_profile() {
 		let mut state = State::default();
 		let now = Instant::now();
+		let mut friend = own_data("Synthetic").user;
+		friend.id = Id(1);
+		state
+			.apply_user_action(crate::user_actions::Event::Friends(Some(vec![(
+				friend,
+				"synthetic".into(),
+			)])))
+			.unwrap();
 		let mut private = *own_data("Synthetic");
 		private.private = true;
 		state.profile_cache.insert(Id(1), None, private, now);
