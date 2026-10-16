@@ -1816,7 +1816,8 @@ impl State {
 	/// Closes the "sending too quickly" notice for the rest of this burst.
 	pub fn dismiss_send_throttle(&mut self) {
 		self.send_throttled = false;
-		self.send_throttle_seen = true;
+		// A drained queue already ended the burst; the next one must be told again.
+		self.send_throttle_seen = self.pending.iter().any(|p| p.delivery == Delivery::Sending);
 	}
 	pub fn prepare_send(&mut self) -> Option<Command> {
 		self.prepare_send_with_attachment(None)
@@ -4607,6 +4608,24 @@ mod tests {
 			panic!()
 		};
 		apply(&mut state, throttle(&third));
+		assert!(state.send_throttled);
+		// Closing a notice after its burst has drained does not hide the next burst's notice.
+		let mut sent = tests::message(12);
+		sent.nonce = Some(third.clone());
+		apply(
+			&mut state,
+			Event::SendResult {
+				nonce: third,
+				result: Ok(sent),
+			},
+		);
+		assert!(state.pending.is_empty());
+		state.dismiss_send_throttle();
+		state.drafts.insert(Id(1), "e".into());
+		let Command::Send { nonce: fourth, .. } = state.prepare_send().unwrap() else {
+			panic!()
+		};
+		apply(&mut state, throttle(&fourth));
 		assert!(state.send_throttled);
 	}
 	#[test]

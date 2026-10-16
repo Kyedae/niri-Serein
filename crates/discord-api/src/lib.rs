@@ -443,12 +443,13 @@ impl DiscordApi {
 			.get("retry-after")
 			.and_then(|v| v.to_str().ok())
 			.and_then(|s| s.parse::<f64>().ok());
-		// A 429 without wait headers takes its body's `retry_after` below, not a default.
-		if exhausted
-			|| (status == StatusCode::TOO_MANY_REQUESTS && reset.or(retry_header).is_some())
-		{
+		// A 429 without wait headers takes its body's `retry_after` below, not a default, even
+		// when the bucket also reports itself exhausted.
+		let limited = status == StatusCode::TOO_MANY_REQUESTS;
+		let wait = reset.or(retry_header);
+		if (exhausted || limited) && (wait.is_some() || !limited) {
 			let mut next = self.cooldown.lock().await;
-			*next = (*next).max(Instant::now() + safe_delay(reset.or(retry_header))?);
+			*next = (*next).max(Instant::now() + safe_delay(wait)?);
 		}
 		if status == StatusCode::UNAUTHORIZED {
 			self.stop();
@@ -3191,16 +3192,46 @@ mod tests {
 				),
 			] {
 				let (mut socket, _) = listener.accept().await.unwrap();
-				let mut buffer = vec![0; 8192];
-				let n = socket.read(&mut buffer).await.unwrap();
-				let request = String::from_utf8_lossy(&buffer[..n]).into_owned();
-				assert!(request.starts_with("POST /channels/2/messages"));
-				nonces.push(request.contains(r#""nonce":"spam""#));
+				let mut request = Vec::new();
+				let payload = loop {
+					let mut bytes = [0; 1024];
+					let n = socket.read(&mut bytes).await.unwrap();
+					assert!(n > 0);
+					request.extend_from_slice(&bytes[..n]);
+					assert!(request.len() < 8192);
+					if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+						let header = std::str::from_utf8(&request[..end]).unwrap();
+						assert!(header.starts_with("POST /channels/2/messages HTTP/1.1\r\n"));
+						let length: usize = header
+							.lines()
+							.find_map(|line| {
+								line.to_ascii_lowercase()
+									.strip_prefix("content-length: ")
+									.map(str::to_owned)
+							})
+							.unwrap()
+							.parse()
+							.unwrap();
+						if request.len() >= end + 4 + length {
+							break serde_json::from_slice::<serde_json::Value>(
+								&request[end + 4..end + 4 + length],
+							)
+							.unwrap();
+						}
+					}
+				};
+				nonces.push(payload["nonce"] == "spam");
 				let (status, body) = response;
+				// An exhausted bucket without wait headers still waits only the body's delay.
+				let exhausted = if status.starts_with("429") {
+					"X-RateLimit-Remaining: 0\r\n"
+				} else {
+					""
+				};
 				socket
 					.write_all(
 						format!(
-							"HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+							"HTTP/1.1 {status}\r\n{exhausted}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
 							body.len()
 						)
 						.as_bytes(),
@@ -3216,6 +3247,7 @@ mod tests {
 		.unwrap();
 		api.base = format!("http://{address}");
 		let mut throttled = Vec::new();
+		let started = Instant::now();
 		let event = tokio::time::timeout(
 			Duration::from_secs(5),
 			api.execute_write(
@@ -3232,6 +3264,7 @@ mod tests {
 		.await
 		.unwrap();
 		assert!(matches!(event, Event::SendResult { result: Ok(_), .. }));
+		assert!(started.elapsed() < Duration::from_millis(900));
 		assert_eq!(throttled, ["spam"]);
 		assert_eq!(server.await.unwrap(), [true, true]);
 	}
