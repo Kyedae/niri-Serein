@@ -3,8 +3,8 @@ use client_core::{Command, State};
 use egui::{Align2, Color32, FontId};
 use model::Id;
 
-/// Fixed width of the server rail column: Discord's 72 points, 16 either side of a tile.
-pub(super) const RAIL_WIDTH: f32 = 72.0;
+/// Fixed width of the server rail column.
+pub(super) const RAIL_WIDTH: f32 = 64.0;
 /// Home, server and folder tiles on the rail.
 pub(super) const RAIL_TILE: f32 = 40.0;
 /// Direct-message avatars, a touch larger than server tiles like Discord's.
