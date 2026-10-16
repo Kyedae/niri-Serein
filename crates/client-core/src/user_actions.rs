@@ -1225,6 +1225,11 @@ impl State {
 				let previous = std::mem::take(&mut self.user_actions.friends);
 				let result = self.replace_friends(entries);
 				let friends = &self.user_actions.friends;
+				let changed = |user: &Id| previous.contains_key(user) != friends.contains_key(user);
+				if previous.keys().chain(friends.keys()).any(changed) {
+					// A profile preload in flight may carry the old friendship's view.
+					self.preload.profiles.touch(None);
+				}
 				self.profile_cache.retain_users(|user| {
 					previous.contains_key(&user) == friends.contains_key(&user)
 				});
@@ -1235,8 +1240,10 @@ impl State {
 				friend,
 				profile,
 			} => {
-				// Profile Privacy depends on friendship, so a cached profile may now be stale.
+				// Profile Privacy depends on friendship, so a cached or preloading profile may now
+				// be stale.
 				self.profile_cache.forget(user);
+				self.preload.profiles.touch(None);
 				if let Some((Action::ProfileFriend { user: target, .. }, _, observed)) =
 					&mut self.user_actions.pending
 					&& *target == user

@@ -605,7 +605,6 @@ impl State {
 			self.fail(*failure);
 			return;
 		}
-		let mut cacheable = true;
 		if preload::is_preload(request) {
 			match self.preload.profiles.arrived(request, result.is_ok()) {
 				preload::Arrival::Adopted(own, fresh)
@@ -619,8 +618,13 @@ impl State {
 						self.preload.profile_retry = Some(self.profile_command(user, guild, own));
 						return;
 					}
+					if !fresh {
+						// Something changed since the preload left, such as a friendship that
+						// decides what the profile shows; ask again rather than show it.
+						self.preload.profile_retry = Some(self.profile_command(user, guild, own));
+						return;
+					}
 					request = own;
-					cacheable = fresh;
 				}
 				// Not opened (yet): keep it for the click, like a card that was closed.
 				preload::Arrival::Adopted(_, true) | preload::Arrival::Keep => {
@@ -648,9 +652,7 @@ impl State {
 				view.error = None;
 				view.data = Some(*data);
 				let data = view.data.clone().expect("stored profile");
-				if cacheable {
-					self.profile_cache.insert(user, guild, data, Instant::now());
-				}
+				self.profile_cache.insert(user, guild, data, Instant::now());
 			}
 			Ok(_) => {
 				view.error = Some("Profile response was invalid or too large");
@@ -784,6 +786,39 @@ mod tests {
 				invalidated
 			);
 		}
+	}
+
+	#[test]
+	fn a_friendship_change_discards_an_adopted_profile_preload() {
+		let now = Instant::now();
+		let mut state = own_state();
+		let Some(Command::Prefetch(command)) =
+			state.preload_profile(None, Some((Id(2), None)), now)
+		else {
+			panic!()
+		};
+		let Command::Profile { request, .. } = *command else {
+			panic!()
+		};
+		// The click adopts the preload in flight; then the friendship ends.
+		assert!(state.request_profile_at(Id(2), None, now).is_none());
+		state
+			.apply_user_action(crate::user_actions::Event::Friend {
+				user: Id(2),
+				friend: false,
+				profile: None,
+			})
+			.unwrap();
+		let mut data = own_data("Former friend");
+		data.user.id = Id(2);
+		state.apply_profile(Id(2), None, request, Ok(data));
+		let view = state.profile.as_ref().unwrap();
+		assert!(view.data.is_none(), "the outdated preload is not shown");
+		assert!(matches!(
+			state.take_preload_retries().collect::<Vec<_>>().as_slice(),
+			[Command::Profile { user: Id(2), .. }]
+		));
+		assert!(!state.profile_cache.contains(Id(2), None, now));
 	}
 
 	#[test]
