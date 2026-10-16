@@ -1563,45 +1563,86 @@ mod tests {
 	fn gif_overlay_labels_paused_gifs_and_drops_the_star_in_on_hover() {
 		let ctx = egui::Context::default();
 		let media = egui::Rect::from_min_size(egui::pos2(20.0, 20.0), egui::vec2(200.0, 120.0));
-		let frame = |pointer: Option<egui::Pos2>, playing: bool| {
-			let mut texts = Vec::new();
-			let mut star_painted = false;
+		let star_size = egui::Vec2::splat(30.0);
+		let gif = egui::Id::unique("gif");
+		let mut tick = 0;
+		// One stable GIF id and 60 Hz frames, so the star's animation is followed frame by frame.
+		let mut frame = |pointer: Option<egui::Pos2>, playing: bool| {
+			tick += 1;
+			let mut sense = egui::Sense::hover();
 			let output = ctx.run_ui(
 				egui::RawInput {
+					time: Some(f64::from(tick) / 60.0),
+					predicted_dt: 1.0 / 60.0,
 					events: pointer
 						.map(|pos| vec![egui::Event::PointerMoved(pos)])
 						.unwrap_or_default(),
 					..Default::default()
 				},
 				|ui| {
-					let response =
-						ui.interact(media, egui::Id::unique("gif"), egui::Sense::click());
-					favorite_star(ui, &response, false, playing);
+					let response = ui.interact(media, gif, egui::Sense::click());
+					sense = favorite_star(ui, &response, false, playing).sense;
 				},
 			);
+			let mut texts = Vec::new();
+			let mut star_top = None;
 			for shape in &output.shapes {
 				match &shape.shape {
 					egui::Shape::Text(text) => texts.push(text.galley.job.text.clone()),
-					egui::Shape::Mesh(_) | egui::Shape::Path(_) => star_painted = true,
+					egui::Shape::Rect(rect) if rect.rect.size() == star_size => {
+						star_top = Some(rect.rect.top());
+					}
 					_ => {}
 				}
 			}
 			output.drop_without_applying_deltas();
-			(texts, star_painted)
+			(texts, star_top, sense)
 		};
-		let (texts, star) = frame(None, false);
+		let (texts, star, sense) = frame(None, false);
 		assert!(texts.iter().any(|text| text == "GIF"));
-		assert!(!star, "no star until the GIF is hovered");
-		let (texts, _) = frame(None, true);
+		assert_eq!(star, None, "no star until the GIF is hovered");
+		assert!(
+			sense.is_focusable(),
+			"the hidden star stays reachable with Tab"
+		);
+		assert!(!sense.senses_click(), "the hidden star takes no clicks");
+		let (texts, _, _) = frame(None, true);
 		assert!(texts.is_empty(), "playing GIFs carry no label");
-		let mut star = false;
-		let mut texts = Vec::new();
-		for _ in 0..30 {
-			(texts, star) = frame(Some(media.center()), false);
-			std::thread::sleep(std::time::Duration::from_millis(10));
+
+		let rest = media.top() + 6.0;
+		let mut steps = Vec::new();
+		for _ in 0..20 {
+			let (texts, star, sense) = frame(Some(media.center()), true);
+			assert!(texts.is_empty());
+			steps.push((
+				star.expect("hovering paints the star"),
+				sense.senses_click(),
+			));
 		}
-		assert!(star, "hovering drops the star in");
-		assert!(!texts.iter().any(|text| text == "GIF"));
+		let (top, clickable) = *steps.last().unwrap();
+		assert_eq!(top, rest, "the star settles in the corner");
+		assert!(clickable);
+		for &(top, clickable) in &steps {
+			let shown = 1.0 - (rest - top) / 8.0;
+			assert!(
+				(0.0..=1.0).contains(&shown),
+				"the star drops from above: {top}"
+			);
+			// Clicks are only taken once the star is mostly shown.
+			assert_eq!(clickable, shown > 0.5, "click threshold at shown = {shown}");
+		}
+		assert!(
+			steps
+				.iter()
+				.any(|&(top, clickable)| top < rest - 1.0 && !clickable),
+			"the drop-in passes through a partly shown, unclickable star"
+		);
+		assert!(
+			steps
+				.iter()
+				.any(|&(top, clickable)| top < rest && clickable),
+			"the star turns clickable before it settles"
+		);
 	}
 
 	/// An X/Twitter link card, shaped like the service's: author, text, footer and time.
@@ -1711,7 +1752,8 @@ pub(crate) fn favorite_star(
 		if shown > 0.5 {
 			egui::Sense::click()
 		} else {
-			egui::Sense::hover()
+			// Hidden, it still takes Tab focus, which reveals it for keyboard users.
+			egui::Sense::focusable_noninteractive()
 		},
 	);
 	if !playing && shown < 1.0 {
