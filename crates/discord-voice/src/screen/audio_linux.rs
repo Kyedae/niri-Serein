@@ -281,11 +281,11 @@ impl Listing {
 			failed: false,
 		}
 	}
-	/// Admissible applications with their sink's monitor, at most `MAX_INPUTS`. A stream
+	/// Admissible applications with their sink's monitor, at most `MAX_LISTED`. A stream
 	/// whose sink appeared after the sink listing is skipped until the next listing rather
 	/// than failing the whole worker.
 	fn inputs(&mut self) -> Vec<Input> {
-		let mut inputs = Vec::with_capacity(MAX_INPUTS);
+		let mut inputs = Vec::with_capacity(self.listed.len());
 		for listed in std::mem::take(&mut self.listed) {
 			let client = self
 				.clients
@@ -298,7 +298,7 @@ impl Listing {
 				.monitors
 				.iter()
 				.find_map(|(sink, monitor)| (*sink == input.sink).then(|| monitor.clone()));
-			if input.monitor.is_some() && inputs.len() < MAX_INPUTS {
+			if input.monitor.is_some() {
 				inputs.push(input);
 			}
 		}
@@ -750,41 +750,83 @@ const WINDOW_REFRESH: Duration = Duration::from_secs(1);
 const WINDOW_REPLY_BYTES: u64 = 512 * 1024;
 const MAX_ANCESTORS: usize = 64;
 
+/// No niri answer yet for a niri-backed share.
+const UNRESOLVED: u64 = u64::MAX;
+/// The cast shows an output: every admissible application is included.
+const WHOLE_SCREEN: u64 = 0;
+
 /// Which applications a share includes. A shared window includes only the process that
 /// owns it and that process's descendants (browser and Electron audio run in a child).
 /// Niri names the window behind each screencast node; other portals do not say which
-/// window was picked, so those shares keep every admissible application.
+/// window was picked, so those shares keep every admissible application. Niri is asked on
+/// its own thread so a slow compositor never stalls the audio mixer.
 struct Scope {
-	node: Option<u32>,
-	window: Option<u32>,
-	next: Instant,
+	/// `UNRESOLVED`, `WHOLE_SCREEN`, or the shared window's owning process ID.
+	answer: Arc<AtomicU64>,
+	lookup: Option<(Arc<AtomicBool>, std::thread::JoinHandle<()>)>,
 }
 impl Scope {
 	fn new(node: Option<u32>) -> Self {
 		let niri = std::env::var_os("NIRI_SOCKET").is_some_and(|v| !v.is_empty());
+		let Some(node) = node.filter(|_| niri) else {
+			return Self::fixed(WHOLE_SCREEN);
+		};
+		let answer = Arc::new(AtomicU64::new(UNRESOLVED));
+		let stop = Arc::new(AtomicBool::new(false));
+		let (thread_answer, thread_stop) = (answer.clone(), stop.clone());
+		let lookup = std::thread::Builder::new()
+			.name("screen-audio-window".into())
+			.spawn(move || {
+				while !thread_stop.load(Ordering::Acquire) {
+					// A failed query keeps the last answer, and until the first answer
+					// nothing is admitted, so a busy compositor never widens a window share.
+					if let Some(window) = niri_window_pid(node) {
+						thread_answer
+							.store(window.map_or(WHOLE_SCREEN, u64::from), Ordering::Release);
+					}
+					let next = Instant::now() + WINDOW_REFRESH;
+					while !thread_stop.load(Ordering::Acquire) && Instant::now() < next {
+						std::thread::sleep(Duration::from_millis(50));
+					}
+				}
+			})
+			.ok();
 		Self {
-			node: node.filter(|_| niri),
-			window: None,
-			next: Instant::now(),
+			answer,
+			lookup: lookup.map(|thread| (stop, thread)),
 		}
 	}
-	/// The owning process of the shared window, or `None` for a whole screen. A failed
-	/// query keeps the last answer so a busy compositor never widens a window share.
-	fn window(&mut self) -> Option<u32> {
-		if let Some(node) = self.node
-			&& Instant::now() >= self.next
-		{
-			self.next = Instant::now() + WINDOW_REFRESH;
-			if let Some(window) = niri_window_pid(node) {
-				self.window = window;
-			}
+	fn fixed(answer: u64) -> Self {
+		Self {
+			answer: Arc::new(AtomicU64::new(answer)),
+			lookup: None,
 		}
-		self.window
 	}
-	fn includes(&mut self, pid: u32) -> bool {
-		self.window()
-			.is_none_or(|window| descends(pid, window, parent))
+	fn includes(&self, pid: u32) -> bool {
+		match self.answer.load(Ordering::Acquire) {
+			UNRESOLVED => false,
+			WHOLE_SCREEN => true,
+			window => u32::try_from(window).is_ok_and(|window| descends(pid, window, parent)),
+		}
 	}
+}
+impl Drop for Scope {
+	fn drop(&mut self) {
+		if let Some((stop, thread)) = self.lookup.take() {
+			stop.store(true, Ordering::Release);
+			let _ = thread.join();
+		}
+	}
+}
+
+/// Excluded and out-of-scope applications are removed before the bound, so unrelated
+/// streams can never crowd the shared window out of the `MAX_INPUTS` attachments.
+fn admit(inputs: Vec<Input>, excluded: &[Input], scope: &Scope) -> Vec<Input> {
+	inputs
+		.into_iter()
+		.filter(|input| !excluded.contains(input) && scope.includes(input.pid))
+		.take(MAX_INPUTS)
+		.collect()
 }
 
 fn niri_request(request: &str) -> Option<serde_json::Value> {
@@ -870,7 +912,7 @@ fn run(
 	stop: &AtomicBool,
 	ready: &AtomicBool,
 	epoch: &AtomicU64,
-	mut scope: Scope,
+	scope: Scope,
 ) -> Result<(), &'static str> {
 	let own = OwnApplication::current()?;
 	let mut metrics = crate::diagnostics::Metrics::new(crate::diagnostics::Scope::ScreenAudio);
@@ -933,10 +975,7 @@ fn run(
 		{
 			listing = None;
 			if ready.load(Ordering::Acquire) {
-				let inputs: Vec<Input> = inputs
-					.into_iter()
-					.filter(|input| !excluded.contains(input) && scope.includes(input.pid))
-					.collect();
+				let inputs = admit(inputs, &excluded, &scope);
 				metrics.add(crate::diagnostics::Stage::CaptureRestart, Duration::ZERO);
 				metrics.capture(crate::diagnostics::Capture::Inputs, inputs.len() as u64);
 				// Applications that stopped, and indices that now belong to someone else.
@@ -1136,12 +1175,29 @@ pub(super) fn check_isolation() {
 		for _ in 0..MAX_INPUTS + 4 {
 			listed_input(null_mut(), &info, 0, data);
 		}
+		let roster = list.inputs();
+		assert_eq!(roster.len(), MAX_INPUTS + 4);
+		assert!(!list.failed);
+		let whole = Scope::fixed(WHOLE_SCREEN);
 		assert_eq!(
-			list.inputs().len(),
+			admit(roster.clone(), &[], &whole).len(),
 			MAX_INPUTS,
 			"excess applications are bounded"
 		);
-		assert!(!list.failed);
+		// The shared window's stream is admitted even behind a full roster of others.
+		let mut crowded = roster;
+		crowded.push(Input {
+			pid: std::process::id(),
+			..crowded[0].clone()
+		});
+		let window = Scope::fixed(u64::from(std::process::id()));
+		let admitted = admit(crowded.clone(), &[], &window);
+		assert_eq!(admitted.len(), 1);
+		assert_eq!(admitted[0].pid, std::process::id());
+		assert!(
+			admit(crowded, &[], &Scope::fixed(UNRESOLVED)).is_empty(),
+			"nothing is shared before niri names the window"
+		);
 		// Native PipeWire applications name their process only on the client.
 		let bare = pulse::pa_proplist_new();
 		set(bare, c"application.name", c"Spotify");
@@ -1198,8 +1254,9 @@ pub(super) fn check_isolation() {
 		"a launcher is not part of its game"
 	);
 	assert!(!descends(21701, 1685, tree));
-	let mut whole = Scope::new(None);
-	assert!(whole.includes(21701));
+	assert!(Scope::new(None).includes(21701));
+	assert!(Scope::fixed(WHOLE_SCREEN).includes(21701));
+	assert!(!Scope::fixed(UNRESOLVED).includes(21701));
 	let mut first = Pending::new(0);
 	let mut second = Pending::new(0);
 	let bytes = [0.25f32.to_le_bytes(), 0.5f32.to_le_bytes()]
