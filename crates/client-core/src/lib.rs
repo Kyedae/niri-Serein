@@ -591,6 +591,8 @@ pub enum Event {
 	},
 	Members(MemberList),
 	DirectPresence(Vec<presence::Update>),
+	/// Guild-scoped presence for DM recipients who are not friends.
+	SharedGuildPresence(Vec<presence::Update>),
 	MemberPresence {
 		guild: Id,
 		channel: Id,
@@ -2653,6 +2655,13 @@ impl State {
 			}
 			return;
 		}
+		if let Event::SharedGuildPresence(updates) = &envelope.event {
+			// Only a fallback: an oversized batch is dropped without marking friends lossy.
+			if envelope.event.bytes() <= MAX_MEMBER_PRESENCE_BYTES {
+				self.apply_shared_guild_presence(updates);
+			}
+			return;
+		}
 		// Preserve the running total through channel-create/permission bursts at guild admission.
 		if !matches!(
 			&envelope.event,
@@ -3340,7 +3349,9 @@ impl State {
 				}
 				Ok(())
 			}
-			Event::MemberPresence { .. } | Event::DirectPresence(_) => {
+			Event::MemberPresence { .. }
+			| Event::DirectPresence(_)
+			| Event::SharedGuildPresence(_) => {
 				unreachable!("presence handled before timeline revision")
 			}
 			Event::MemberSearch { request, result } => {
@@ -4525,7 +4536,7 @@ impl Event {
 							.map(MemberPresence::heap_bytes)
 							.sum::<usize>()
 				}
-				Self::DirectPresence(updates) => {
+				Self::DirectPresence(updates) | Self::SharedGuildPresence(updates) => {
 					updates.capacity() * size_of::<presence::Update>()
 						+ updates
 							.iter()
