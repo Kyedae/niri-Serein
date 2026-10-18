@@ -301,6 +301,8 @@ impl Connection {
                 let mut invite:Option<AbortTask>=None;
                 let mut search:Option<AbortTask>=None;
                 let mut gifs:Option<AbortTask>=None;
+                // Latest-wins: a newer typing indicator replaces one still in flight.
+                let mut typing:Option<AbortTask>=None;
                 let mut gif_favorites:Option<AbortTask>=None;
                 let mut application_commands:Option<AbortTask>=None;
                 let mut sticker_packs:Option<AbortTask>=None;
@@ -377,6 +379,17 @@ impl Connection {
                             let Some(command)=command else {break;};
                             if matches!(command,Command::CancelSearch) {drop(search.take());continue;}
                             if matches!(command,Command::CancelGifs) {drop(gifs.take());continue;}
+                            if matches!(command,Command::Typing{..}) {
+                                drop(typing.take());
+                                let api=api.clone();let emit=emit.clone();let finished=finished.clone();
+                                typing=Some(AbortTask(tokio::spawn(async move {
+                                    let event=api.execute(command).await;
+                                    let failure=match &event {Event::TypingSent(Err(f)) if f.ends_session() && *f!=Failure::Capacity=>Some(*f),_=>None};
+                                    let error=emit(event).err().or(failure);
+                                    if let Some(error)=error {api.stop();let _=finished.send(Some(error));}
+                                })));
+                                continue;
+                            }
                             if matches!(command,Command::GifFavorites{..}) {
                                 drop(gif_favorites.take());
                                 let api=api.clone();let emit=emit.clone();let finished=finished.clone();let wake=wake.clone();
