@@ -1480,7 +1480,10 @@ READY `guilds[].presences`, READY_SUPPLEMENTAL `merged_presences.guilds` and gui
 PRESENCE_UPDATE. Serein previously read none of these for DMs, so such a recipient stayed
 Offline whatever their status. These guild sources now stand in for DM recipients who are
 not friends only, batched separately within the same 100-ms window and limits; friends keep
-using only the direct feed. As before, a DM recipient without any report is Offline, matching
+using only the direct feed. The gateway drops guild updates for anyone else before batching,
+tracking DM recipients and friends (up to 4,096 each) as channels and relationships change, and
+sends the READY guild bootstrap after Startup. A shared status is discarded once that recipient
+becomes a friend. As before, a DM recipient without any report is Offline, matching
 the unofficial description that only non-offline users are sent. These shapes come from the
 [unofficial gateway documentation](https://docs.discord.food/topics/gateway-events) and were
 not validated against a live session.

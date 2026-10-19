@@ -1671,8 +1671,8 @@ async fn run_recoverable(
 										direct_presence.bootstrap_users=friends.as_ref().into_iter().flatten().map(|(u,_)|u.id).chain(channels.iter().filter(|c|c.guild.is_none() && matches!(c.kind,1|3)).flat_map(|c|c.recipients.iter().map(|u|u.id))).take(client_core::presence::MAX_DIRECT_PRESENCES).collect();
 										// DM recipients who are not friends are reported only through shared guilds.
 										shared_presence.bootstrap_users=channels.iter().filter(|c|c.guild.is_none() && matches!(c.kind,1|3)).flat_map(|c|c.recipients.iter().map(|u|u.id)).filter(|id|!friends.as_ref().into_iter().flatten().any(|(u,_)|u.id==*id)).take(client_core::presence::MAX_DIRECT_PRESENCES).collect();
-										for presences in guild_presences { shared_presence.friends(presences, Instant::now(), &emit)?; }
-										if let Some(guilds) = ready.merged_presences.as_ref().and_then(|m| m.guilds.as_deref()) { shared_presence.guilds(guilds, Instant::now(), &emit)?; }
+										for (user,_) in friends.iter().flatten() { shared_presence.set_friend(user.id,true); }
+										for user in channels.iter().filter(|c|c.guild.is_none() && matches!(c.kind,1|3)).flat_map(|c|&c.recipients) { shared_presence.add_recipient(user.id); }
 										calls.allowed=channels.iter().filter(|c|(c.guild.is_none() && channel_events::private_call(c.kind,c.recipients.len())) || (c.guild.is_some() && c.kind==2)).map(|c|(c.id,c.guild)).collect();
 										if was_ready { emit(Event::Resync)?; }
 										emit(Event::Interaction(client_core::interactions::Event::Session(state.session.clone().ok_or(Failure::Protocol)?)))?;
@@ -1706,6 +1706,9 @@ async fn run_recoverable(
 										if let Some(friends) = ready.merged_presences.as_ref().and_then(|m| m.friends.as_deref()).or(ready.presences.as_deref()) {
 											direct_presence.friends(friends, Instant::now(), &emit)?;
 										}
+										// After Startup, like the direct bootstrap: a full batch flushed earlier would be dropped.
+										for presences in guild_presences { shared_presence.friends(presences, Instant::now(), &emit)?; }
+										if let Some(guilds) = ready.merged_presences.as_ref().and_then(|m| m.guilds.as_deref()) { shared_presence.guilds(guilds, Instant::now(), &emit)?; }
 										if !participants.is_empty() { emit(Event::Voice(client_core::voice::Event::Snapshot { partial: false, guild: None, participants }))?; }
 										state.failures = 0;
 										ready_at = Some(Instant::now());
@@ -1803,7 +1806,7 @@ async fn run_recoverable(
 											emit(Event::Typing(client_core::typing::Signal { channel:typing.channel_id,user:typing.user_id,timestamp:typing.timestamp }))?;
 										}
 									}
-									"CHANNEL_RECIPIENT_ADD" => {let d:RecipientAdded=decode(packet.d.get().as_bytes()).map_err(|_|Failure::Protocol)?;emit(Event::RecipientAdded {channel:d.channel_id,user:d.user.into_model()})?;}
+									"CHANNEL_RECIPIENT_ADD" => {let d:RecipientAdded=decode(packet.d.get().as_bytes()).map_err(|_|Failure::Protocol)?;shared_presence.add_recipient(d.user.id);emit(Event::RecipientAdded {channel:d.channel_id,user:d.user.into_model()})?;}
 									"CHANNEL_RECIPIENT_REMOVE" => {let d:RecipientRemoved=decode(packet.d.get().as_bytes()).map_err(|_|Failure::Protocol)?;if owner_id==Some(d.user.id) {calls.allowed.remove(&d.channel_id);}emit(Event::RecipientRemoved {channel:d.channel_id,user:d.user.id})?;}
 									"USER_NOTE_UPDATE" => {
 										#[derive(serde::Deserialize)]
@@ -1815,6 +1818,7 @@ async fn run_recoverable(
 										let relationship: discord_protocol::relationships::Relationship = decode(packet.d.get().as_bytes()).map_err(|_| Failure::ProtocolAt("Unsupported relationship update"))?;
 										emit(Event::UserAction(client_core::user_actions::Event::Relationship { user: relationship.id, blocked: packet.t.as_deref() != Some("RELATIONSHIP_REMOVE") && relationship.kind == 2 }))?;
 										let friend = packet.t.as_deref() != Some("RELATIONSHIP_REMOVE") && relationship.kind == 1;
+										shared_presence.set_friend(relationship.id, friend);
 										let profile = relationship.user.map(discord_protocol::relationships::friend).transpose().map_err(|_| Failure::ProtocolAt("Invalid friend metadata"))?;
 										let ignored = (packet.t.as_deref() != Some("RELATIONSHIP_REMOVE") && (relationship.kind == 2 || relationship.user_ignored)).then_some(relationship.user_ignored && relationship.kind != 2);
 										let incoming = (packet.t.as_deref() != Some("RELATIONSHIP_REMOVE") && matches!(relationship.kind,3|4)).then_some(relationship.kind==3);
@@ -1892,7 +1896,10 @@ async fn run_recoverable(
 										let permissions=owner_id.map(|owner|channel_events::permission_metadata(packet.d.get().as_bytes(),owner)).transpose()?.flatten();
 										let (event, request, spam)=channel_events::create(packet.d.get().as_bytes(),&mut inbox)?;
 										match &event {
-											Event::ChannelCreated(c) => channel_events::admit_call(c,&known_guilds,&mut calls),
+											Event::ChannelCreated(c) => {
+												channel_events::admit_call(c,&known_guilds,&mut calls);
+												if c.guild.is_none() && matches!(c.kind,1|3) { for user in &c.recipients { shared_presence.add_recipient(user.id); } }
+											}
 											Event::Unavailable(id) => calls.invalidate(*id),
 											_=>{}
 										}

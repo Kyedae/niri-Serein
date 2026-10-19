@@ -41,16 +41,22 @@ pub struct Envelope<'a> {
 impl<'a> Envelope<'a> {
 	/// Each guild's initial `presences`. For a normal account these include non-offline users
 	/// with an open DM, the only bootstrap presence for DM recipients who are not friends
-	/// (unofficial). A malformed guild list yields none; entries are decoded at use.
+	/// (unofficial). A malformed guild entry is skipped; presence entries are decoded at use.
 	pub fn guild_presences(&self) -> Vec<&'a RawValue> {
 		#[derive(Deserialize)]
 		struct Presences<'a> {
 			#[serde(default, borrow)]
 			presences: Option<&'a RawValue>,
 		}
-		serde_json::from_str::<Vec<Presences<'a>>>(self.guilds.get())
-			.map(|guilds| guilds.into_iter().filter_map(|g| g.presences).collect())
+		serde_json::from_str::<Vec<&'a RawValue>>(self.guilds.get())
 			.unwrap_or_default()
+			.into_iter()
+			.filter_map(|guild| {
+				serde_json::from_str::<Presences<'a>>(guild.get())
+					.ok()?
+					.presences
+			})
+			.collect()
 	}
 }
 pub(crate) fn empty_array() -> &'static RawValue {
@@ -446,10 +452,11 @@ mod tests {
 	fn guild_presences_are_borrowed_per_guild_and_tolerate_missing_lists() {
 		let mut payload = fixture();
 		payload["guilds"][0]["presences"] = json!([{"user":{"id":"31"},"status":"idle"}]);
-		payload["guilds"]
-			.as_array_mut()
-			.unwrap()
-			.push(json!({"id":"2"}));
+		let guilds = payload["guilds"].as_array_mut().unwrap();
+		guilds.push(json!({"id":"2"}));
+		// One malformed guild entry must not discard the other guilds' lists.
+		guilds.insert(0, json!("not a guild"));
+		guilds.push(json!(7));
 		let bytes = serde_json::to_vec(&payload).unwrap();
 		let presences = decode(&bytes).unwrap().guild_presences();
 		assert_eq!(presences.len(), 1);

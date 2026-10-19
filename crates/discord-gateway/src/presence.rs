@@ -2,13 +2,23 @@ use crate::{Event, Instant};
 use client_core::{MAX_MEMBER_PRESENCE_BYTES, presence::Update};
 use discord_protocol::presence::PresenceUpdate;
 use model::Id;
-use std::{collections::BTreeMap, time::Duration};
+use std::{
+	collections::{BTreeMap, BTreeSet},
+	time::Duration,
+};
+
+/// Bounds each shared-presence eligibility set; one `Id` per entry.
+const MAX_SHARED_USERS: usize = 4096;
 
 #[derive(Default)]
 pub(crate) struct Pending {
 	/// Batches guild-scoped presence for DM recipients who are not friends instead of
 	/// global presence; see `Event::SharedGuildPresence`.
 	pub shared: bool,
+	/// Shared only: DM recipients and friends, kept current so unrelated guild traffic cannot
+	/// fill the batch before an eligible recipient's update.
+	recipients: BTreeSet<Id>,
+	friends: BTreeSet<Id>,
 	updates: BTreeMap<Id, Update>,
 	bytes: usize,
 	pub bootstrap_users: std::collections::BTreeSet<Id>,
@@ -24,10 +34,25 @@ impl Pending {
 	pub fn push(&mut self, update: PresenceUpdate, now: Instant) {
 		// Guild-scoped presence is not authoritative for a user's global/DM presence; it is
 		// batched separately as a fallback for DM recipients Discord reports no other way.
-		if update.guild.is_some() != self.shared {
+		if update.guild.is_some() != self.shared
+			|| (self.shared
+				&& (!self.recipients.contains(&update.user) || self.friends.contains(&update.user)))
+		{
 			return;
 		}
 		self.insert(update, now);
+	}
+	pub fn add_recipient(&mut self, user: Id) {
+		if self.recipients.len() < MAX_SHARED_USERS {
+			self.recipients.insert(user);
+		}
+	}
+	pub fn set_friend(&mut self, user: Id, friend: bool) {
+		if !friend {
+			self.friends.remove(&user);
+		} else if self.friends.len() < MAX_SHARED_USERS {
+			self.friends.insert(user);
+		}
 	}
 	fn insert(&mut self, update: PresenceUpdate, now: Instant) {
 		let update = Update {
@@ -167,6 +192,7 @@ mod tests {
 			"guild presence never enters the direct feed"
 		);
 		let mut shared = Pending::shared();
+		shared.add_recipient(Id(3));
 		shared.push(decode(br#"{"user":{"id":"3"},"status":"online"}"#), now);
 		assert!(
 			shared.take().is_none(),
@@ -195,6 +221,38 @@ mod tests {
 			(updates[0].user, &updates[0].status),
 			(Id(3), &Patch::Value("idle".into()))
 		);
+	}
+
+	#[test]
+	fn unrelated_guild_traffic_cannot_crowd_out_dm_recipients() {
+		let now = Instant::now();
+		let guild_update = |user: u64| {
+			discord_protocol::presence::decode(
+				format!(r#"{{"guild_id":"10","user":{{"id":"{user}"}},"status":"idle"}}"#)
+					.as_bytes(),
+			)
+			.unwrap()
+		};
+		let mut shared = Pending::shared();
+		shared.add_recipient(Id(3));
+		shared.add_recipient(Id(4));
+		shared.set_friend(Id(4), true);
+		for user in 1_000..1_150 {
+			shared.push(guild_update(user), now);
+		}
+		shared.push(guild_update(4), now);
+		shared.push(guild_update(3), now);
+		let Some(Event::SharedGuildPresence(updates)) = shared.take() else {
+			panic!()
+		};
+		assert_eq!(
+			updates.iter().map(|u| u.user).collect::<Vec<_>>(),
+			[Id(3)],
+			"only non-friend DM recipients enter the shared batch"
+		);
+		shared.set_friend(Id(4), false);
+		shared.push(guild_update(4), now);
+		assert!(matches!(shared.take(), Some(Event::SharedGuildPresence(u)) if u[0].user == Id(4)));
 	}
 
 	#[test]

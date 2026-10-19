@@ -252,6 +252,9 @@ impl State {
 				self.direct_presence_lossy = true;
 				continue;
 			}
+			if !shared {
+				self.shared_presence_users.remove(&update.user);
+			}
 			if index.is_some_and(|i| self.direct_presences[i] == resolved) {
 				continue;
 			}
@@ -269,11 +272,15 @@ impl State {
 						> MAX_DIRECT_PRESENCE_BYTES)
 			{
 				let evicted = self.direct_presences.remove(0);
+				self.shared_presence_users.remove(&evicted.user);
 				self.direct_presence_lossy = true;
 				membership_changed |= online(&evicted);
 				retained_bytes -= evicted.heap_bytes();
 			}
 			retained_bytes += resolved.heap_bytes();
+			if shared {
+				self.shared_presence_users.insert(resolved.user);
+			}
 			self.direct_presences.push(resolved);
 		}
 		if membership_changed {
@@ -335,11 +342,17 @@ impl State {
 		self.direct_presences = old
 			.into_iter()
 			.filter(|p| {
-				let retained = self.known_presence_user(p.user);
+				// Once a friend, a shared-guild stand-in would outlive the direct feed's Offline.
+				let retained = self.known_presence_user(p.user)
+					&& !(self.shared_presence_users.contains(&p.user)
+						&& self.friend_presence_user(p.user));
 				membership_changed |= !retained && online(p);
 				retained
 			})
 			.collect();
+		let retained = &self.direct_presences;
+		self.shared_presence_users
+			.retain(|user| retained.iter().any(|p| p.user == *user));
 		if membership_changed {
 			self.direct_presence_epoch = self.direct_presence_epoch.wrapping_add(1);
 		}
@@ -349,6 +362,7 @@ impl State {
 			self.direct_presence_epoch = self.direct_presence_epoch.wrapping_add(1);
 		}
 		self.direct_presences.clear();
+		self.shared_presence_users.clear();
 		self.direct_presence_bytes = None;
 	}
 	pub(crate) fn apply_member_presence(
@@ -1142,9 +1156,12 @@ mod tests {
 			)]),
 		);
 		assert!(state.presence_for(Id(424_242)).is_none());
-		// Once a friend, only the direct feed may change their presence.
+		// Once a friend, only the direct feed may change their presence; the shared stand-in
+		// goes so a missing direct report reads as Offline.
 		befriend(&mut state, &recipient);
 		state.gateway_connected = true;
+		assert!(state.presence_for(recipient.id).is_none());
+		assert!(state.shared_presence_users.is_empty());
 		apply(
 			&mut state,
 			Event::DirectPresence(vec![direct_update(
