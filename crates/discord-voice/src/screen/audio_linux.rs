@@ -743,14 +743,16 @@ impl Pending {
 	}
 }
 
-/// How long one compositor query may block this worker.
+/// How long one whole compositor reply may take.
 const WINDOW_QUERY: Duration = Duration::from_millis(100);
 /// Niri casts can be retargeted while sharing, so the shared window is looked up again.
 const WINDOW_REFRESH: Duration = Duration::from_secs(1);
-const WINDOW_REPLY_BYTES: u64 = 512 * 1024;
+/// A retarget cannot be seen while niri does not answer, so an old answer expires.
+const WINDOW_STALE: Duration = Duration::from_secs(5);
+const WINDOW_REPLY_BYTES: usize = 512 * 1024;
 const MAX_ANCESTORS: usize = 64;
 
-/// No niri answer yet for a niri-backed share.
+/// No usable niri answer for a niri-backed share: nothing is admitted.
 const UNRESOLVED: u64 = u64::MAX;
 /// The cast shows an output: every admissible application is included.
 const WHOLE_SCREEN: u64 = 0;
@@ -763,7 +765,7 @@ const WHOLE_SCREEN: u64 = 0;
 struct Scope {
 	/// `UNRESOLVED`, `WHOLE_SCREEN`, or the shared window's owning process ID.
 	answer: Arc<AtomicU64>,
-	lookup: Option<(Arc<AtomicBool>, std::thread::JoinHandle<()>)>,
+	lookup: Option<Arc<AtomicBool>>,
 }
 impl Scope {
 	fn new(node: Option<u32>) -> Self {
@@ -777,12 +779,24 @@ impl Scope {
 		let lookup = std::thread::Builder::new()
 			.name("screen-audio-window".into())
 			.spawn(move || {
+				let mut known = None;
+				let mut answered = Instant::now();
 				while !thread_stop.load(Ordering::Acquire) {
-					// A failed query keeps the last answer, and until the first answer
-					// nothing is admitted, so a busy compositor never widens a window share.
-					if let Some(window) = niri_window_pid(node) {
-						thread_answer
-							.store(window.map_or(WHOLE_SCREEN, u64::from), Ordering::Release);
+					// A failed query keeps the last answer only briefly, and until the first
+					// answer nothing is admitted, so a busy compositor never widens a share.
+					match niri_request("\"Casts\"").and_then(|casts| cast_target(&casts, node)) {
+						Some(target) => {
+							let windows = || niri_request("\"Windows\"");
+							thread_answer.store(
+								scope_answer(target, &mut known, windows),
+								Ordering::Release,
+							);
+							answered = Instant::now();
+						}
+						None if answered.elapsed() > WINDOW_STALE => {
+							thread_answer.store(UNRESOLVED, Ordering::Release);
+						}
+						None => {}
 					}
 					let next = Instant::now() + WINDOW_REFRESH;
 					while !thread_stop.load(Ordering::Acquire) && Instant::now() < next {
@@ -793,7 +807,7 @@ impl Scope {
 			.ok();
 		Self {
 			answer,
-			lookup: lookup.map(|thread| (stop, thread)),
+			lookup: lookup.map(|_| stop),
 		}
 	}
 	fn fixed(answer: u64) -> Self {
@@ -812,9 +826,10 @@ impl Scope {
 }
 impl Drop for Scope {
 	fn drop(&mut self) {
-		if let Some((stop, thread)) = self.lookup.take() {
+		// Not joined: a compositor that stops answering, even mid-connect, must not hold up
+		// ending the share. The thread owns only its Arcs and exits after its current query.
+		if let Some(stop) = self.lookup.take() {
 			stop.store(true, Ordering::Release);
-			let _ = thread.join();
 		}
 	}
 }
@@ -830,19 +845,33 @@ fn admit(inputs: Vec<Input>, excluded: &[Input], scope: &Scope) -> Vec<Input> {
 }
 
 fn niri_request(request: &str) -> Option<serde_json::Value> {
-	use std::io::{BufRead, Read, Write};
+	use std::io::{Read, Write};
 	let path = std::env::var_os("NIRI_SOCKET")?;
 	let mut socket = std::os::unix::net::UnixStream::connect(path).ok()?;
-	socket.set_read_timeout(Some(WINDOW_QUERY)).ok()?;
+	let deadline = Instant::now() + WINDOW_QUERY;
 	socket.set_write_timeout(Some(WINDOW_QUERY)).ok()?;
 	socket.write_all(request.as_bytes()).ok()?;
 	socket.write_all(b"\n").ok()?;
 	socket.shutdown(std::net::Shutdown::Write).ok()?;
-	let mut line = Vec::new();
-	std::io::BufReader::new(socket.take(WINDOW_REPLY_BYTES))
-		.read_until(b'\n', &mut line)
-		.ok()?;
-	let mut reply: serde_json::Value = serde_json::from_slice(&line).ok()?;
+	// The deadline covers the whole reply, so a trickling answer cannot extend it read by read.
+	let mut reply = Vec::new();
+	let mut chunk = [0; 8192];
+	loop {
+		let left = deadline
+			.checked_duration_since(Instant::now())
+			.filter(|left| !left.is_zero())?;
+		socket.set_read_timeout(Some(left)).ok()?;
+		let read = socket.read(&mut chunk).ok()?;
+		reply.extend_from_slice(&chunk[..read]);
+		if reply.len() > WINDOW_REPLY_BYTES {
+			return None;
+		}
+		if read == 0 || chunk[..read].contains(&b'\n') {
+			break;
+		}
+	}
+	let line = reply.split(|byte| *byte == b'\n').next()?;
+	let mut reply: serde_json::Value = serde_json::from_slice(line).ok()?;
 	Some(
 		reply
 			.get_mut("Ok")?
@@ -851,26 +880,59 @@ fn niri_request(request: &str) -> Option<serde_json::Value> {
 	)
 }
 
-/// `Some(None)` when the cast shows an output, `Some(Some(pid))` for a window, and `None`
-/// when niri could not say.
-fn niri_window_pid(node: u32) -> Option<Option<u32>> {
-	let casts = niri_request("\"Casts\"")?;
-	let window = cast_window(&casts, node)?;
-	let Some(window) = window else {
-		return Some(None);
-	};
-	window_pid(&niri_request("\"Windows\"")?, window).map(Some)
+/// What one niri cast shows.
+#[derive(Debug, PartialEq)]
+enum Target {
+	/// Not yet set, or cleared.
+	Nothing,
+	Output,
+	Window(u64),
 }
 
-fn cast_window(casts: &serde_json::Value, node: u32) -> Option<Option<u64>> {
+/// `None` when niri does not list the cast.
+fn cast_target(casts: &serde_json::Value, node: u32) -> Option<Target> {
 	let cast = casts
 		.as_array()?
 		.iter()
 		.find(|cast| cast.get("pw_node_id").and_then(|v| v.as_u64()) == Some(node.into()))?;
-	let Some(window) = cast.get("target")?.get("Window") else {
-		return Some(None);
-	};
-	window.get("id").unwrap_or(window).as_u64().map(Some)
+	let target = cast.get("target")?;
+	if let Some(window) = target.get("Window") {
+		return Some(
+			window
+				.get("id")
+				.unwrap_or(window)
+				.as_u64()
+				.map_or(Target::Nothing, Target::Window),
+		);
+	}
+	// Only an explicit output shares every application; `Nothing` and unknown targets share none.
+	Some(if target.get("Output").is_some() {
+		Target::Output
+	} else {
+		Target::Nothing
+	})
+}
+
+/// The `Scope` answer for a cast. `known` remembers the last window's owning process, which
+/// cannot change while niri keeps that window ID. A window whose process cannot be found is
+/// unresolved, so retargeting never keeps the previous output's or application's audio.
+fn scope_answer(
+	target: Target,
+	known: &mut Option<(u64, u32)>,
+	windows: impl FnOnce() -> Option<serde_json::Value>,
+) -> u64 {
+	match target {
+		Target::Nothing => UNRESOLVED,
+		Target::Output => WHOLE_SCREEN,
+		Target::Window(id) => {
+			if known.is_none_or(|(window, _)| window != id) {
+				*known = windows()
+					.and_then(|windows| window_pid(&windows, id))
+					.map(|pid| (id, pid));
+			}
+			known.map_or(UNRESOLVED, |(_, pid)| u64::from(pid))
+		}
+	}
 }
 
 fn window_pid(windows: &serde_json::Value, id: u64) -> Option<u32> {
@@ -1231,13 +1293,42 @@ pub(super) fn check_isolation() {
 	let casts = serde_json::json!([
 		{"pw_node_id": 180, "target": {"Output": {"name": "DP-2"}}},
 		{"pw_node_id": 255, "target": {"Window": {"id": 19}}},
+		{"pw_node_id": 300, "target": {"Nothing": {}}},
 	]);
-	assert_eq!(cast_window(&casts, 180), Some(None));
-	assert_eq!(cast_window(&casts, 255), Some(Some(19)));
-	assert_eq!(cast_window(&casts, 1), None);
+	assert_eq!(cast_target(&casts, 180), Some(Target::Output));
+	assert_eq!(cast_target(&casts, 255), Some(Target::Window(19)));
+	assert_eq!(cast_target(&casts, 300), Some(Target::Nothing));
+	assert_eq!(cast_target(&casts, 1), None);
 	let windows = serde_json::json!([{"id": 4, "pid": 1685}, {"id": 19, "pid": 21701}]);
 	assert_eq!(window_pid(&windows, 19), Some(21701));
 	assert_eq!(window_pid(&windows, 5), None);
+	let mut known = None;
+	let listed = || Some(windows.clone());
+	assert_eq!(
+		scope_answer(Target::Nothing, &mut known, listed),
+		UNRESOLVED,
+		"a cleared cast shares no application"
+	);
+	assert_eq!(
+		scope_answer(Target::Output, &mut known, listed),
+		WHOLE_SCREEN
+	);
+	assert_eq!(
+		scope_answer(Target::Window(19), &mut known, || None),
+		UNRESOLVED,
+		"retargeting to an unresolved window drops the output's audio"
+	);
+	assert_eq!(scope_answer(Target::Window(19), &mut known, listed), 21701);
+	assert_eq!(
+		scope_answer(Target::Window(19), &mut known, || None),
+		21701,
+		"the same window keeps its owner without asking again"
+	);
+	assert_eq!(
+		scope_answer(Target::Window(4), &mut known, || None),
+		UNRESOLVED,
+		"retargeting to another window drops the previous application"
+	);
 	let tree = |pid| match pid {
 		1804 => Some(1685),
 		1685 => Some(900),
