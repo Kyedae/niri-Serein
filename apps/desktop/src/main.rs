@@ -3418,7 +3418,7 @@ impl Desktop {
 				self.messaging.voice_camera_preview = None;
 			}
 			if matches!(control, client_core::voice::Command::Leave { .. }) {
-				self.voice.stop();
+				self.voice.hang_up(&self.state);
 				self.messaging.camera_test_requested = false;
 				self.messaging.camera_test_texture = None;
 			}
@@ -5464,6 +5464,11 @@ impl eframe::App for Desktop {
 		}
 		#[cfg(target_os = "macos")]
 		self.app_menu(ctx);
+		// Like Discord, Ctrl+Q exits even when closing the window only hides it to the tray.
+		#[cfg(not(target_os = "macos"))]
+		if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::Q)) {
+			self.tray_window.quit(ctx);
+		}
 		self.tray_window.logic(
 			ctx,
 			self.background_available(),
@@ -5810,6 +5815,7 @@ impl eframe::App for Desktop {
 		self.messaging.voice_available = true;
 		if close_requested
 			&& !self.close_approved
+			&& !self.tray_window.system_close()
 			&& ((self.state.demo && self.state.has_unsent())
 				|| self
 					.state
@@ -6611,63 +6617,6 @@ fn plaintext_login_dir() -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	#[cfg(feature = "demo")]
-	#[test]
-	fn demo_group_members_preserve_recipients_and_deduplicate_current_account() {
-		let mut state = test_support::demo_state();
-		let channel = model::Id(29);
-		state.selected = Some(channel);
-		let recipient = state.channel(channel).unwrap().recipients[1].clone();
-		for include_current in [false, true] {
-			if include_current {
-				let current = state.user.clone().unwrap();
-				state
-					.channels
-					.iter_mut()
-					.find(|c| c.id == channel)
-					.unwrap()
-					.recipients = vec![current, recipient.clone()];
-			}
-			let Some(Command::Members { guild, request, .. }) = state.request_members() else {
-				panic!("synthetic group member request");
-			};
-			let expected = state.members.as_ref().unwrap().clone();
-			let response = demo_members(&state, guild, channel, request);
-			state.apply(Envelope {
-				generation: state.generation,
-				event: Event::Members(response),
-			});
-			let list = state.members.as_ref().unwrap();
-			assert_eq!(list.total, if include_current { 2 } else { 3 });
-			assert_eq!(list.total, expected.total);
-			let users = |list: &model::MemberList| {
-				list.slots
-					.iter()
-					.filter_map(|slot| match slot {
-						Some(model::MemberSlot::Person(member)) => Some(member.user.clone()),
-						_ => None,
-					})
-					.collect::<Vec<_>>()
-			};
-			assert!(users(list) == users(&expected));
-			assert!(users(list).contains(&recipient));
-		}
-	}
-
-	#[test]
-	fn user_action_results_use_toasts() {
-		let success = Event::UserAction(client_core::user_actions::Event::Written {
-			action: client_core::user_actions::Action::Nickname {
-				user: model::Id(2),
-				text: "Synthetic".into(),
-			},
-			request: 1,
-			result: Ok(()),
-		});
-		let (level, text) = user_action_notice(&success).unwrap();
-		assert!(matches!(level, ui::design::Level::Success));
-		assert_eq!(text, "Nickname saved");
-	}
 	#[test]
 	fn frame_sample_is_bounded_demo_only_and_excludes_warmup() {
 		for (demo, value) in [

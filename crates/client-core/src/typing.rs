@@ -14,6 +14,8 @@ const TYPING_LIFETIME: Duration = Duration::from_secs(10);
 const TYPING_RESEND: Duration = Duration::from_secs(8);
 /// DM and group DM conversations tracked at once for the conversation list.
 const DIRECT_TYPING: usize = 16;
+/// Recent outgoing channels; a full store suppresses new channels until a slot expires.
+const SENT_TYPING: usize = 16;
 
 /// Selected-conversation typists, plus who is typing in any direct conversation for the
 /// conversation list. Fixed storage with no per-signal allocation.
@@ -23,8 +25,8 @@ pub struct Typing {
 	users: [Option<(Id, Instant)>; 8],
 	/// (DM channel, typist, deadline).
 	direct: [Option<(Id, Id, Instant)>; DIRECT_TYPING],
-	/// The last indicator this account sent, to re-send no more than every `TYPING_RESEND`.
-	sent: Option<(Id, Instant)>,
+	/// Recent indicators this account sent, to re-send no more than every `TYPING_RESEND`.
+	sent: [Option<(Id, Instant)>; SENT_TYPING],
 }
 impl Typing {
 	/// Navigation clears only the selected conversation's typists.
@@ -196,12 +198,25 @@ impl State {
 		if !self.gateway_connected
 			|| self.freshness == Freshness::Unavailable
 			|| !self.can_send(channel)
-			|| self.typing.sent.is_some_and(|(at, sent)| {
-				at == channel && now.saturating_duration_since(sent) < TYPING_RESEND
-			}) {
+		{
 			return None;
 		}
-		self.typing.sent = Some((channel, now));
+		for slot in &mut self.typing.sent {
+			if slot.is_some_and(|(_, sent)| now.saturating_duration_since(sent) >= TYPING_RESEND) {
+				*slot = None;
+			}
+		}
+		if self
+			.typing
+			.sent
+			.iter()
+			.flatten()
+			.any(|(at, _)| *at == channel)
+		{
+			return None;
+		}
+		let slot = self.typing.sent.iter_mut().find(|slot| slot.is_none())?;
+		*slot = Some((channel, now));
 		Some(crate::Command::Typing { channel })
 	}
 	pub(crate) fn typing_message(&mut self, message: &model::Message) {
@@ -213,12 +228,12 @@ impl State {
 			.user
 			.as_ref()
 			.is_some_and(|owner| owner.id == message.author.id)
-			&& self
-				.typing
-				.sent
-				.is_some_and(|(at, _)| at == message.channel)
 		{
-			self.typing.sent = None;
+			for slot in &mut self.typing.sent {
+				if slot.is_some_and(|(at, _)| at == message.channel) {
+					*slot = None;
+				}
+			}
 		}
 		self.typing.remove(message.channel, message.author.id);
 	}
@@ -401,6 +416,39 @@ mod tests {
 	}
 
 	#[test]
+	fn switching_drafts_keeps_each_channels_outgoing_throttle() {
+		let mut state = state();
+		let now = Instant::now();
+		assert!(state.prepare_typing(Id(10), now).is_some());
+		state.select(Id(11)).unwrap();
+		state.freshness = Freshness::Fresh;
+		state.history_pending = false;
+		assert!(
+			state
+				.prepare_typing(Id(11), now + Duration::from_secs(1))
+				.is_some()
+		);
+		state.select(Id(10)).unwrap();
+		state.freshness = Freshness::Fresh;
+		state.history_pending = false;
+		assert!(
+			state
+				.prepare_typing(Id(10), now + Duration::from_secs(2))
+				.is_none()
+		);
+		assert!(state.prepare_typing(Id(10), now + TYPING_RESEND).is_some());
+		// Only the channel whose own message arrived gets a fresh indicator immediately.
+		state.typing_message(&message(1, 11));
+		state.select(Id(11)).unwrap();
+		state.freshness = Freshness::Fresh;
+		state.history_pending = false;
+		assert!(state.prepare_typing(Id(11), now + TYPING_RESEND).is_some());
+		state.typing.sent = [Some((Id(99), now)); SENT_TYPING];
+		assert!(state.prepare_typing(Id(11), now).is_none());
+		assert!(state.prepare_typing(Id(11), now + TYPING_RESEND).is_some());
+	}
+
+	#[test]
 	fn expiry_uses_wire_age_and_monotonic_deadline_without_mutating_queries() {
 		{
 			let mut state = state();
@@ -447,7 +495,7 @@ mod tests {
 			}
 			assert_eq!(state.typing_users(now).count(), 8);
 			// Selected typists plus the conversation-list store: still fixed, allocation-free storage.
-			assert!(size_of::<Typing>() <= 1024);
+			assert!(size_of::<Typing>() <= 1536);
 			state.observe_typing_at(signal(2, 95), wall, now);
 			assert_eq!(
 				state.typing.users[0].unwrap().1,
