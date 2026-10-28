@@ -52,6 +52,7 @@ pkgver() {
 
 build() {
     cd "$srcdir/serein-upstream"
+    rm -rf -- dist/linux-root
     cargo xtask package --format dir
 }
 
