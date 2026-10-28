@@ -860,6 +860,9 @@ mod evdev {
 	/// `struct input_event`: a `timeval`, then type, code and value.
 	const EVENT_SIZE: usize = 2 * size_of::<usize>() + 8;
 	const EV_KEY: u16 = 1;
+	const SYN_DROPPED: u16 = 3;
+	const MAX_DEVICES: usize = 64;
+	const MAX_EVENTS: usize = 64;
 	const BTN_MIDDLE: u16 = 0x112;
 	const BTN_SIDE: u16 = 0x113;
 	const BTN_EXTRA: u16 = 0x114;
@@ -884,6 +887,7 @@ mod evdev {
 		path: PathBuf,
 		file: File,
 		held: Vec<u16>,
+		keys: Vec<u16>,
 	}
 
 	/// Runs only while a global voice action is bound to a mouse button.
@@ -891,7 +895,7 @@ mod evdev {
 		stop: Arc<AtomicBool>,
 		thread: Option<std::thread::JoinHandle<()>>,
 		toggles: u8,
-		readable: bool,
+		readable: Arc<AtomicBool>,
 	}
 
 	impl Poller {
@@ -921,7 +925,8 @@ mod evdev {
 			}
 			let mut devices = Vec::new();
 			scan(&wanted, &mut devices);
-			let readable = !devices.is_empty();
+			let readable = Arc::new(AtomicBool::new(buttons_readable(&devices, &watched)));
+			let worker_readable = readable.clone();
 			let stop = Arc::new(AtomicBool::new(false));
 			let stopped = stop.clone();
 			let thread = std::thread::Builder::new()
@@ -929,23 +934,36 @@ mod evdev {
 				.spawn(move || {
 					let mut held = vec![false; watched.len()];
 					let mut scanned = Instant::now();
-					let mut buffer = [0u8; EVENT_SIZE * 64];
+					let mut buffer = [0u8; EVENT_SIZE];
 					while !stopped.load(Ordering::Relaxed) {
 						if scanned.elapsed() >= RESCAN {
 							scanned = Instant::now();
 							scan(&wanted, &mut devices);
 						}
-						// A device that fails to read was unplugged; its held buttons are released.
-						devices.retain_mut(|device| drain(device, &mut buffer));
-						let down = |code: u16| devices.iter().any(|d| d.held.contains(&code));
-						for ((index, codes, modifiers), held) in watched.iter().zip(&mut held) {
-							let now = codes.iter().any(|code| down(*code))
-								&& modifiers_match(*modifiers, &down);
-							if now != *held {
-								*held = now;
-								native.apply(*index, now);
+						let mut device = 0;
+						while device < devices.len() {
+							let mut gone = false;
+							for _ in 0..MAX_EVENTS {
+								match read_event(&mut devices[device], &mut buffer, &wanted) {
+									Ok(false) => break,
+									Ok(true) => {
+										apply_bindings(&devices, &watched, &mut held, &native)
+									}
+									Err(()) => {
+										gone = true;
+										break;
+									}
+								}
+							}
+							if gone {
+								devices.remove(device);
+								apply_bindings(&devices, &watched, &mut held, &native);
+							} else {
+								device += 1;
 							}
 						}
+						worker_readable
+							.store(buttons_readable(&devices, &watched), Ordering::Relaxed);
 						std::thread::sleep(PERIOD);
 					}
 				})
@@ -960,12 +978,12 @@ mod evdev {
 
 		/// Mute/deafen bits this poller owns, so focused input does not toggle them twice.
 		pub(super) fn toggle_mask(&self) -> u8 {
-			if self.readable { self.toggles } else { 0 }
+			if self.readable() { self.toggles } else { 0 }
 		}
 
 		/// Whether any input device with a bound button could be opened.
 		pub(super) fn readable(&self) -> bool {
-			self.readable
+			self.readable.load(Ordering::Relaxed)
 		}
 	}
 
@@ -1002,7 +1020,10 @@ mod evdev {
 		let Ok(entries) = std::fs::read_dir("/sys/class/input") else {
 			return;
 		};
-		for entry in entries.flatten() {
+		for entry in entries.take(256).flatten() {
+			if devices.len() >= MAX_DEVICES {
+				break;
+			}
 			let name = entry.file_name();
 			let Some(name) = name.to_str().filter(|name| name.starts_with("event")) else {
 				continue;
@@ -1028,6 +1049,11 @@ mod evdev {
 					path,
 					file,
 					held: Vec::new(),
+					keys: wanted
+						.iter()
+						.copied()
+						.filter(|code| has_key(&capabilities, *code))
+						.collect(),
 				});
 			}
 		}
@@ -1045,36 +1071,110 @@ mod evdev {
 			.is_some_and(|word| word & (1 << (code % bits)) != 0)
 	}
 
-	/// Folds every queued event into the device's held keys; false once the device is gone.
-	fn drain(device: &mut Device, buffer: &mut [u8]) -> bool {
-		loop {
-			match device.file.read(buffer) {
-				Ok(0) => return false,
-				Ok(read) => {
-					for event in buffer[..read].as_chunks::<EVENT_SIZE>().0 {
-						let at = EVENT_SIZE - 8;
-						let kind = u16::from_ne_bytes([event[at], event[at + 1]]);
-						let code = u16::from_ne_bytes([event[at + 2], event[at + 3]]);
-						let value = i32::from_ne_bytes([
-							event[at + 4],
-							event[at + 5],
-							event[at + 6],
-							event[at + 7],
-						]);
-						if kind != EV_KEY {
-							continue;
-						}
-						match value {
-							0 => device.held.retain(|held| *held != code),
-							1 if !device.held.contains(&code) => device.held.push(code),
-							_ => {}
-						}
-					}
-				}
-				Err(error) if error.kind() == ErrorKind::WouldBlock => return true,
-				Err(error) if error.kind() == ErrorKind::Interrupted => {}
-				Err(_) => return false,
+	type Watched = (usize, &'static [u16], u8);
+
+	fn buttons_readable(devices: &[Device], watched: &[Watched]) -> bool {
+		watched.iter().all(|(_, codes, _)| {
+			codes
+				.iter()
+				.any(|code| devices.iter().any(|device| device.keys.contains(code)))
+		})
+	}
+
+	fn apply_bindings(
+		devices: &[Device],
+		watched: &[Watched],
+		held: &mut [bool],
+		native: &NativeInput,
+	) {
+		let down = |code: u16| devices.iter().any(|device| device.held.contains(&code));
+		for ((index, codes, modifiers), held) in watched.iter().zip(held) {
+			let now = codes.iter().any(|code| down(*code)) && modifiers_match(*modifiers, &down);
+			if now != *held {
+				*held = now;
+				native.apply(*index, now);
 			}
+		}
+	}
+
+	fn fold_event(held: &mut Vec<u16>, event: &[u8; EVENT_SIZE], wanted: &[u16]) -> Result<(), ()> {
+		let at = EVENT_SIZE - 8;
+		let kind = u16::from_ne_bytes([event[at], event[at + 1]]);
+		let code = u16::from_ne_bytes([event[at + 2], event[at + 3]]);
+		let value = i32::from_ne_bytes(event[at + 4..].try_into().unwrap());
+		if kind == 0 && code == SYN_DROPPED {
+			// Close and reopen after loss: never keep a possibly missed release held.
+			return Err(());
+		}
+		if kind == EV_KEY && wanted.contains(&code) {
+			match value {
+				0 => held.retain(|held| *held != code),
+				1 if !held.contains(&code) => held.push(code),
+				_ => {}
+			}
+		}
+		Ok(())
+	}
+
+	fn read_event(
+		device: &mut Device,
+		buffer: &mut [u8; EVENT_SIZE],
+		wanted: &[u16],
+	) -> Result<bool, ()> {
+		match device.file.read(buffer) {
+			Ok(EVENT_SIZE) => fold_event(&mut device.held, buffer, wanted).map(|()| true),
+			Ok(_) => Err(()),
+			Err(error)
+				if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted) =>
+			{
+				Ok(false)
+			}
+			Err(_) => Err(()),
+		}
+	}
+
+	#[cfg(test)]
+	mod tests {
+		use super::*;
+
+		#[test]
+		fn queued_clicks_survive_and_lost_events_release_push_to_talk() {
+			let native = NativeInput {
+				state: Default::default(),
+				wake: Arc::new(|| {}),
+			};
+			let mut devices = vec![Device {
+				path: PathBuf::new(),
+				file: File::open("/dev/null").unwrap(),
+				held: vec![],
+				keys: vec![BTN_SIDE],
+			}];
+			let watched: &[Watched] = &[
+				(super::super::TOGGLE_MUTE, &[BTN_SIDE], 0),
+				(super::super::PUSH_TO_TALK, &[BTN_SIDE], 0),
+			];
+			let mut held = [false; 2];
+			let mut event = [0; EVENT_SIZE];
+			let at = EVENT_SIZE - 8;
+			event[at..at + 2].copy_from_slice(&EV_KEY.to_ne_bytes());
+			event[at + 2..at + 4].copy_from_slice(&BTN_SIDE.to_ne_bytes());
+			for value in [1_i32, 0] {
+				event[at + 4..].copy_from_slice(&value.to_ne_bytes());
+				fold_event(&mut devices[0].held, &event, &[BTN_SIDE]).unwrap();
+				apply_bindings(&devices, watched, &mut held, &native);
+			}
+			assert_eq!(native.take_toggles(), 1);
+			assert!(!native.ptt_down());
+			event[at + 4..].copy_from_slice(&1_i32.to_ne_bytes());
+			fold_event(&mut devices[0].held, &event, &[BTN_SIDE]).unwrap();
+			apply_bindings(&devices, watched, &mut held, &native);
+			assert!(native.ptt_down());
+			event[at..at + 2].copy_from_slice(&0_u16.to_ne_bytes());
+			event[at + 2..at + 4].copy_from_slice(&SYN_DROPPED.to_ne_bytes());
+			assert!(fold_event(&mut devices[0].held, &event, &[BTN_SIDE]).is_err());
+			devices.clear();
+			apply_bindings(&devices, watched, &mut held, &native);
+			assert!(!native.ptt_down());
 		}
 	}
 }
