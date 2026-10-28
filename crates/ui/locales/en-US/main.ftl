@@ -85,6 +85,7 @@ hide-chat = Hide chat
 show-chat = Show chat
 search-conversation = Search this conversation
 show-member-list = Show member list
+show-user-profile = Show user profile
 pinned-messages = Pinned messages
 threads = Threads
 
@@ -807,6 +808,8 @@ embeds-show-video-preview-playback-opens-in-your-browser = Video preview · play
 embeds-text-text-display-limited = Text display limited
 
 ## crates/ui/src/emoji_details.rs
+# Context: hover_card
+emoji-details-hover-card-click-to-learn-more = Click to learn more
 # Context: show
 emoji-details-show-a-custom-emoji = A custom emoji.
 # Context: show
@@ -3005,6 +3008,8 @@ server-menu-header-server-menu = Server menu
 server-menu-leave-item-leave-server = Leave server
 # Context: read_item
 server-menu-read-item-mark-as-read = Mark As Read
+# Context: all_read_item
+server-menu-all-read-item-mark-all-as-read = Mark All As Read
 # Context: settings_item
 server-menu-settings-item-server-settings = Server Settings
 # Context: show
@@ -3515,6 +3520,9 @@ settings-storage-page-removes-cached-messages-and-media-drafts-and-your-login-st
 settings-storage-page-serein-does-not-collect-telemetry-or-upload-diagnostics-discord-retains = Serein does not collect telemetry or upload diagnostics. Discord retains service-side data according to its own policies.
 # Context: storage_page
 settings-storage-page-your-privacy = Your privacy
+settings-storage-page-saved-login = Saved login
+settings-storage-page-plaintext-login = Save login in plaintext without a keyring
+settings-storage-page-plaintext-login-description = Used only when no OS keyring (GNOME Keyring, KWallet, Keychain or Credential Manager) works. The token is stored unencrypted in a private file in Serein's data folder, where anyone with access to your user account can read it. Turning this off deletes those files.
 # Context: cosmetic_settings
 settings-cosmetics = Profile cosmetics
 # Context: cosmetic_settings
@@ -3587,6 +3595,8 @@ slash-commands-composer-command-unavailable-your-arguments-are-kept = Command un
 slash-commands-footer-refresh-application-commands = Refresh application commands
 
 ## crates/ui/src/stickers.rs
+# Context: message
+stickers-message-from-an-unavailable-server = This sticker is from a server that is either invite-only or unavailable.
 # Context: message
 stickers-message-loading-sticker-details = Loading sticker details…
 # Context: message
@@ -4024,6 +4034,8 @@ user-menu-contents-private-nicknames-are-available-for-confirmed-friends = Priva
 user-menu-contents-profile = Profile
 # Context: contents
 user-menu-contents-remove-this-conversation-from-your-dm-list-messages-are-kept = Remove this conversation from your DM list. Messages are kept.
+# Context: contents
+user-menu-contents-roles = Roles
 # Context: contents
 user-menu-contents-unblock = Unblock
 # Context: contents
@@ -4810,6 +4822,8 @@ composer-placeholder-direct = Message @{ $name }
 
 # Context: timeline_dm_intro
 timeline-dm-intro = This is the beginning of your direct message history with { $name }.
+# Context: timeline_group_intro
+timeline-group-intro = Welcome to the beginning of the { $name } group.
 
 # Context: timeline_channel_intro
 timeline-channel-intro-title = Welcome to #{ $channel }!
@@ -4895,8 +4909,29 @@ time-format-12-hour = 12-hour
 time-format-24-hour = 24-hour
 profiles-status-edit = Edit status
 profiles-status-clear = Clear status
+send-throttled-title = Woah there. Way too spicy
+send-throttled-body = You're sending messages too quickly!
+send-throttled-dismiss = Enter the chill zone
+search-overlays-message-contains = Message Contains
+search-overlays-no-matching-content-types = No matching content types
+search-overlays-history = History
+search-overlays-clear-history = Clear search history
 game-mentions-loading = Loading games…
 game-mentions-header = GAMES MATCHING @{ $query }
 game-mentions-unavailable = Games are unavailable.
 game-mentions-empty = No matching games.
 game-mentions-retry = Retry
+profiles-private-profile = Private Profile
+profiles-private-notice = { $name }’s profile is private, so some info is hidden. Add them as a friend to see more.
+settings-cosmetics-name-styles = Name styles
+settings-cosmetics-name-styles-description = Nitro display name fonts, colours and effects.
+main-sign-in-rate-limited-detail = Discord is rate limiting this sign-in. Wait before trying again. Another attempt before that can make the wait longer.
+
+# New message
+new-message-title = New Message
+new-message-subtitle = Group DMs can have up to 10 members.
+new-message-search = Search
+new-message-hint = Add friends to start a direct message or a group.
+new-message-no-people-found = No one matches that search.
+new-message-create = Create Message
+new-message-cancel = Cancel

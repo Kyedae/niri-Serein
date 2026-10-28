@@ -85,6 +85,7 @@ hide-chat = Chat ausblenden
 show-chat = Chat anzeigen
 search-conversation = Durchsuchen Sie dieses Gespräch
 show-member-list = Mitgliederliste anzeigen
+show-user-profile = Benutzerprofil anzeigen
 pinned-messages = Angepinnte Nachrichten
 threads = Themen
 
@@ -798,6 +799,8 @@ embeds-show-video-preview-playback-opens-in-your-browser = Videovorschau · Wied
 embeds-text-text-display-limited = Textanzeige eingeschränkt
 
 ## crates/ui/src/emoji_details.rs
+# Context: hover_card
+emoji-details-hover-card-click-to-learn-more = Klicken, um mehr zu erfahren
 # Context: show
 emoji-details-show-a-custom-emoji = Ein benutzerdefiniertes Emoji.
 # Context: show
@@ -2991,6 +2994,8 @@ server-menu-header-server-menu = Servermenü
 server-menu-leave-item-leave-server = Verlassen Sie den Server
 # Context: read_item
 server-menu-read-item-mark-as-read = Als gelesen markieren
+# Context: all_read_item
+server-menu-all-read-item-mark-all-as-read = Alles als gelesen markieren
 # Context: settings_item
 server-menu-settings-item-server-settings = Servereinstellungen
 # Context: show
@@ -3574,6 +3579,8 @@ slash-commands-footer-refresh-application-commands = Anwendungsbefehle aktualisi
 
 ## crates/ui/src/stickers.rs
 # Context: message
+stickers-message-from-an-unavailable-server = Dieser Aufkleber stammt von einem Server, der nur mit Einladung zugänglich oder nicht verfügbar ist.
+# Context: message
 stickers-message-loading-sticker-details = Aufkleberdetails werden geladen…
 # Context: message
 stickers-message-retry-sticker-details = Wiederholen Sie die Aufkleberdetails
@@ -4010,6 +4017,8 @@ user-menu-contents-private-nicknames-are-available-for-confirmed-friends = Für 
 user-menu-contents-profile = Profil
 # Context: contents
 user-menu-contents-remove-this-conversation-from-your-dm-list-messages-are-kept = Entfernen Sie diese Konversation aus Ihrer DM-Liste. Nachrichten werden gespeichert.
+# Context: contents
+user-menu-contents-roles = Rollen
 # Context: contents
 user-menu-contents-unblock = Entsperren
 # Context: contents
@@ -4724,6 +4733,8 @@ composer-placeholder-direct = Nachricht an @{ $name }
 
 # Context: timeline_dm_intro
 timeline-dm-intro = Das ist der Anfang deines Direktnachrichtenverlaufs mit { $name }.
+# Context: timeline_group_intro
+timeline-group-intro = Willkommen am Anfang der Gruppe { $name }.
 
 # Context: timeline_channel_intro
 timeline-channel-intro-title = Willkommen in #{ $channel }!
@@ -4809,3 +4820,24 @@ time-format-12-hour = 12-Stunden
 time-format-24-hour = 24-Stunden
 profiles-status-edit = Status bearbeiten
 profiles-status-clear = Status löschen
+send-throttled-title = Hoppla, viel zu scharf
+send-throttled-body = Du sendest Nachrichten zu schnell!
+send-throttled-dismiss = Ab in die Chill-Zone
+profiles-private-profile = Privates Profil
+profiles-private-notice = Das Profil von { $name } ist privat, daher sind manche Infos verborgen. Sende eine Freundschaftsanfrage, um mehr zu sehen.
+settings-cosmetics-name-styles = Namensstile
+settings-cosmetics-name-styles-description = Nitro-Schriftarten, -Farben und -Effekte für Anzeigenamen.
+search-overlays-message-contains = Nachricht enthält
+search-overlays-no-matching-content-types = Keine passenden Inhaltstypen
+search-overlays-history = Verlauf
+search-overlays-clear-history = Suchverlauf löschen
+main-sign-in-rate-limited-detail = Discord begrenzt diese Anmeldung. Warte, bevor du es erneut versuchst. Ein früherer Versuch kann die Wartezeit verlängern.
+
+# New message
+new-message-title = Neue Nachricht
+new-message-subtitle = Gruppen-DMs können bis zu 10 Mitglieder haben.
+new-message-search = Suchen
+new-message-hint = Fügen Sie Freunde hinzu, um eine Direktnachricht oder eine Gruppe zu starten.
+new-message-no-people-found = Niemand entspricht dieser Suche.
+new-message-create = Nachricht erstellen
+new-message-cancel = Abbrechen

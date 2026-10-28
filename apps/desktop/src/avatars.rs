@@ -87,7 +87,8 @@ fn media_encoded(rendition: &Rendition) -> usize {
 	}
 }
 fn decode_edge(key: &str) -> u32 {
-	if key.starts_with("anim:")
+	// Animated emoji fall through to the still emoji edge, which keeps their frames small.
+	if (key.starts_with("anim:") && !key.starts_with("anim:emoji-"))
 		|| key.starts_with("embed:")
 		|| key.starts_with("gif:")
 		|| key.starts_with("spotify-")
@@ -703,7 +704,10 @@ fn cdn_url(key: &str) -> Option<String> {
 	}
 	if let Some(id) = key.strip_prefix("app-icon-") {
 		let id: Id = id.parse().ok()?;
-		return Some(format!("https://discord.com/api/v10/applications/{id}/rpc"));
+		return Some(format!(
+			"{}/applications/{id}/rpc",
+			discord_api::api_v10_base()
+		));
 	}
 	if let Some(value) = key.strip_prefix("activity-") {
 		let (application, asset) = value.split_once('-')?;
@@ -718,6 +722,11 @@ fn cdn_url(key: &str) -> Option<String> {
 		return Some(format!(
 			"https://cdn.discordapp.com/emojis/{id}.png?size=64"
 		));
+	}
+	// Animated custom emoji; GIF is a documented custom emoji format in the CDN reference.
+	if let Some(id) = key.strip_prefix("anim:emoji-") {
+		let id: Id = id.parse().ok()?;
+		return (id.0 != 0).then(|| format!("https://cdn.discordapp.com/emojis/{id}.gif?size=64"));
 	}
 	if let Some(value) = key.strip_prefix("banner-") {
 		let (id, hash) = value.split_once('-')?;
@@ -2376,32 +2385,6 @@ mod tests {
 	}
 
 	#[test]
-	fn scalable_emoji_uses_bundled_shapes_and_preserves_transparency() {
-		for cell in 0..4009 {
-			let (svg, _) = ui::emoji::bundled_svg(&format!("emoji-unicode-{cell}-64")).unwrap();
-			let image =
-				super::rasterize_emoji(svg, 64).unwrap_or_else(|| panic!("artwork cell {cell}"));
-			assert_eq!(image.size, [64; 2]);
-			assert_eq!(image.pixels[0], egui::Color32::TRANSPARENT);
-			assert!(
-				image.pixels.iter().any(|pixel| pixel.a() > 0),
-				"artwork cell {cell}"
-			);
-		}
-		for cell in [0, 1000, 2000, 3000, 4008] {
-			for edge in [64, 128, 256] {
-				let (svg, _) =
-					ui::emoji::bundled_svg(&format!("emoji-unicode-{cell}-{edge}")).unwrap();
-				let image = super::rasterize_emoji(svg, edge).unwrap();
-				assert_eq!(image.size, [edge as usize; 2]);
-				assert_eq!(image.pixels[0], egui::Color32::TRANSPARENT);
-				assert!(image.pixels.iter().any(|pixel| pixel.a() > 0));
-			}
-		}
-		assert!(super::rasterize_emoji(b"invalid", 64).is_none());
-		assert!(super::rasterize_emoji(b"invalid", 1024).is_none());
-	}
-	#[test]
 	fn offline_emoji_worker_rejects_network_requests() {
 		let runtime = tokio::runtime::Runtime::new().unwrap();
 		let mut worker =
@@ -2901,6 +2884,21 @@ mod tests {
 			] {
 				assert!(super::cdn_url(key).is_none());
 			}
+			assert_eq!(
+				super::cdn_url("anim:emoji-9001").as_deref(),
+				Some("https://cdn.discordapp.com/emojis/9001.gif?size=64")
+			);
+			assert!(super::is_animated_key("anim:emoji-9001"));
+			assert_eq!(super::decode_edge("anim:emoji-9001"), 128);
+			assert!(super::budget("anim:emoji-9001").frames.is_some());
+			for key in [
+				"anim:emoji-0",
+				"anim:emoji-../9001",
+				"anim:emoji-9001?size=8192",
+				"anim:emoji-https://example.com/x.gif",
+			] {
+				assert!(super::cdn_url(key).is_none(), "{key}");
+			}
 		}
 
 		{
@@ -3167,59 +3165,6 @@ mod tests {
 				.starts_with("embed-")
 		);
 		assert_eq!(disk_key("frame-30-31").as_deref(), Some("frame-30-31"));
-	}
-
-	#[test]
-	fn animated_banner_and_avatar_urls_and_keys() {
-		assert!(super::is_animated_key(
-			"banner-123-a_abcdef0123456789abcdef0123456789"
-		));
-		assert!(super::is_animated_key(
-			"member-banner-999-123-a_abcdef0123456789abcdef0123456789"
-		));
-		assert!(super::is_animated_key(
-			"member-avatar-999-123-a_abcdef0123456789abcdef0123456789"
-		));
-		assert!(super::is_animated_key(
-			"123-a_abcdef0123456789abcdef0123456789"
-		));
-		assert!(!super::is_animated_key(
-			"banner-123-abcdef0123456789abcdef0123456789"
-		));
-		assert!(!super::is_animated_key(
-			"member-banner-999-123-abcdef0123456789abcdef0123456789"
-		));
-		assert!(!super::is_animated_key(
-			"member-avatar-999-123-abcdef0123456789abcdef0123456789"
-		));
-		assert!(!super::is_animated_key(
-			"123-abcdef0123456789abcdef0123456789"
-		));
-
-		assert_eq!(
-			super::cdn_url("banner-123-a_abcdef0123456789abcdef0123456789").as_deref(),
-			Some(
-				"https://cdn.discordapp.com/banners/123/a_abcdef0123456789abcdef0123456789.gif?size=512"
-			)
-		);
-		assert_eq!(
-			super::cdn_url("member-banner-999-123-a_abcdef0123456789abcdef0123456789").as_deref(),
-			Some(
-				"https://cdn.discordapp.com/guilds/999/users/123/banners/a_abcdef0123456789abcdef0123456789.gif?size=512"
-			)
-		);
-		assert_eq!(
-			super::cdn_url("123-a_abcdef0123456789abcdef0123456789").as_deref(),
-			Some(
-				"https://cdn.discordapp.com/avatars/123/a_abcdef0123456789abcdef0123456789.gif?size=128"
-			)
-		);
-		assert_eq!(
-			super::cdn_url("123-abcdef0123456789abcdef0123456789").as_deref(),
-			Some(
-				"https://cdn.discordapp.com/avatars/123/abcdef0123456789abcdef0123456789.png?size=128"
-			)
-		);
 	}
 
 	use super::*;

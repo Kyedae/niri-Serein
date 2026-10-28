@@ -451,6 +451,13 @@ fn push_emoji(out: &mut Vec<Ranked>, key: (u8, u8, u64), candidate: impl FnOnce(
 	}
 }
 impl Menu {
+	/// Whether [`Self::keys`] accepts Tab, so the composer must keep it from focus navigation.
+	pub fn claims_tab(&self) -> bool {
+		!self.dismissed
+			&& (!self.candidates.is_empty()
+				|| (self.kind == Some(Kind::Game)
+					&& self.game_status == client_core::game_mentions::Status::Unavailable))
+	}
 	pub fn needs_games(&self) -> bool {
 		self.kind == Some(Kind::Game) && !self.dismissed
 	}
@@ -1558,6 +1565,7 @@ mod tests {
 								tertiary_color: None,
 								position: 0,
 								hoist: false,
+								managed: false,
 								bits: p::VIEW_CHANNEL | p::SEND_MESSAGES | p::MENTION_EVERYONE,
 							}]),
 							member: Some(p::Member {
@@ -2160,6 +2168,7 @@ pub fn debug_role_mentions_check(state: &mut State) {
 		tertiary_color: None,
 		position: 1,
 		hoist: false,
+		managed: false,
 	});
 	let mut message = state.timeline.iter().next().unwrap().clone();
 	message.channel = channel;

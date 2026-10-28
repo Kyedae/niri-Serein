@@ -553,7 +553,36 @@ fn portal_trigger(chord: &KeyChord) -> Option<String> {
 	if chord.modifiers & model::keybinds::SHIFT != 0 {
 		value.push_str("SHIFT+");
 	}
-	value.push_str(code_name(&chord.key)?);
+	// The portal expects XKB keysyms, not global-hotkey's physical key codes.
+	let key = match chord.key.as_str() {
+		"ArrowDown" => "Down",
+		"ArrowLeft" => "Left",
+		"ArrowRight" => "Right",
+		"ArrowUp" => "Up",
+		"Backspace" => "BackSpace",
+		"Enter" => "Return",
+		"Space" => "space",
+		"PageDown" => "Next",
+		"PageUp" => "Prior",
+		"Slash" => "slash",
+		"Backtick" => "grave",
+		"Minus" => "minus",
+		"Equals" => "equal",
+		"Comma" => "comma",
+		"Period" => "period",
+		name if name.len() == 1 && name.as_bytes()[0].is_ascii_uppercase() => {
+			value.push(name.as_bytes()[0].to_ascii_lowercase() as char);
+			return Some(value);
+		}
+		name if name.starts_with("Num") => name
+			.strip_prefix("Num")
+			.filter(|digit| digit.len() == 1 && digit.as_bytes()[0].is_ascii_digit())?,
+		name => {
+			code_name(name)?;
+			name
+		}
+	};
+	value.push_str(key);
 	Some(value)
 }
 
@@ -1068,6 +1097,52 @@ mod tests {
 		assert!(evdev::has_key(keyboard, 29));
 		assert!(evdev::has_key(keyboard, 42));
 		assert!(!evdev::has_key("", 0x113));
+	}
+
+	#[cfg(target_os = "linux")]
+	#[test]
+	fn portal_triggers_use_xkb_keysyms() {
+		use model::keybinds::{ALT, CTRL, PRIMARY, SHIFT};
+		for (key, keysym) in [
+			("M", "m"),
+			("D", "d"),
+			("Num1", "1"),
+			("ArrowDown", "Down"),
+			("Backspace", "BackSpace"),
+			("Enter", "Return"),
+			("Space", "space"),
+			("PageDown", "Next"),
+			("PageUp", "Prior"),
+			("Slash", "slash"),
+			("Backtick", "grave"),
+			("Minus", "minus"),
+			("Equals", "equal"),
+			("Comma", "comma"),
+			("Period", "period"),
+			("F12", "F12"),
+			("Tab", "Tab"),
+		] {
+			assert_eq!(
+				portal_trigger(&KeyChord::new(key, PRIMARY | SHIFT)),
+				Some(format!("CTRL+SHIFT+{keysym}"))
+			);
+		}
+		assert_eq!(
+			portal_trigger(&KeyChord::new("D", CTRL | ALT)),
+			Some("CTRL+ALT+d".into())
+		);
+		assert_eq!(
+			portal_trigger(&KeyChord::new("PageDown", 0)),
+			Some("Next".into())
+		);
+		for chord in [
+			KeyChord::default(),
+			KeyChord::new("MouseExtra1", ALT),
+			KeyChord::new("Num10", ALT),
+			KeyChord::new("unknown", ALT),
+		] {
+			assert_eq!(portal_trigger(&chord), None);
+		}
 	}
 
 	#[test]

@@ -85,6 +85,7 @@ hide-chat = Sohbeti gizle
 show-chat = Sohbeti göster
 search-conversation = Bu görüşmeyi arayın
 show-member-list = Üye listesini göster
+show-user-profile = Kullanıcı profilini göster
 pinned-messages = Sabitlenmiş mesajlar
 threads = Konular
 
@@ -799,6 +800,8 @@ embeds-show-video-preview-playback-opens-in-your-browser = Video önizlemesi · 
 embeds-text-text-display-limited = Metin gösterimi sınırlı
 
 ## crates/ui/src/emoji_details.rs
+# Context: hover_card
+emoji-details-hover-card-click-to-learn-more = Daha fazla bilgi için tıklayın
 # Context: show
 emoji-details-show-a-custom-emoji = Özel bir emoji.
 # Context: show
@@ -2992,6 +2995,8 @@ server-menu-header-server-menu = Sunucu menüsü
 server-menu-leave-item-leave-server = Sunucudan ayrıl
 # Context: read_item
 server-menu-read-item-mark-as-read = Okundu Olarak İşaretle
+# Context: all_read_item
+server-menu-all-read-item-mark-all-as-read = Tümünü Okundu Olarak İşaretle
 # Context: settings_item
 server-menu-settings-item-server-settings = Sunucu Ayarları
 # Context: show
@@ -3572,6 +3577,8 @@ slash-commands-footer-refresh-application-commands = Uygulama komutlarını yeni
 
 ## crates/ui/src/stickers.rs
 # Context: message
+stickers-message-from-an-unavailable-server = Bu çıkartma, yalnızca davetle katılınabilen veya kullanılamayan bir sunucudan.
+# Context: message
 stickers-message-loading-sticker-details = Çıkartma ayrıntıları yükleniyor…
 # Context: message
 stickers-message-retry-sticker-details = Çıkartma ayrıntılarını yeniden dene
@@ -4004,6 +4011,8 @@ user-menu-contents-private-nicknames-are-available-for-confirmed-friends = Onayl
 user-menu-contents-profile = Profil
 # Context: contents
 user-menu-contents-remove-this-conversation-from-your-dm-list-messages-are-kept = Bu konuşmayı DM listenizden kaldırın. Mesajlar saklanıyor.
+# Context: contents
+user-menu-contents-roles = Roller
 # Context: contents
 user-menu-contents-unblock = Engellemeyi kaldır
 # Context: contents
@@ -4713,6 +4722,8 @@ composer-placeholder-direct = @{ $name } kişisine mesaj gönder
 
 # Context: timeline_dm_intro
 timeline-dm-intro = { $name } ile doğrudan mesaj geçmişinin başlangıcı.
+# Context: timeline_group_intro
+timeline-group-intro = { $name } grubunun başlangıcına hoş geldiniz.
 
 # Context: timeline_channel_intro
 timeline-channel-intro-title = #{ $channel } kanalına hoş geldin!
@@ -4795,3 +4806,24 @@ time-format-12-hour = 12 saat
 time-format-24-hour = 24 saat
 profiles-status-edit = Durumu düzenle
 profiles-status-clear = Durumu temizle
+send-throttled-title = Hop, biraz yavaş!
+send-throttled-body = Mesajları çok hızlı gönderiyorsun!
+send-throttled-dismiss = Tamam, yavaşlıyorum
+profiles-private-profile = Gizli Profil
+profiles-private-notice = { $name } adlı kullanıcının profili gizli, bu yüzden bazı bilgiler saklı. Daha fazlasını görmek için arkadaş olarak ekle.
+settings-cosmetics-name-styles = Ad stilleri
+settings-cosmetics-name-styles-description = Nitro görünen ad yazı tipleri, renkleri ve efektleri.
+search-overlays-message-contains = Mesaj şunu içerir
+search-overlays-no-matching-content-types = Eşleşen içerik türü yok
+search-overlays-history = Geçmiş
+search-overlays-clear-history = Arama geçmişini temizle
+main-sign-in-rate-limited-detail = Discord bu oturum açmayı sınırlıyor. Tekrar denemeden önce bekle. Daha erken bir deneme bekleme süresini uzatabilir.
+
+# New message
+new-message-title = Yeni Mesaj
+new-message-subtitle = Grup DM'lerinde en fazla 10 üye olabilir.
+new-message-search = Ara
+new-message-hint = Bir doğrudan mesaj veya grup başlatmak için arkadaş ekleyin.
+new-message-no-people-found = Bu aramayla eşleşen kimse yok.
+new-message-create = Mesaj Oluştur
+new-message-cancel = İptal
