@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Delegate to system yay and update custom Serein after a devel sysupgrade."""
+import subprocess
+import sys
+
+
+def devel_upgrade(args):
+    sync = upgrade = devel = False
+    for arg in args:
+        if arg == "--":
+            break
+        if arg == "--sync":
+            sync = True
+        elif arg == "--sysupgrade":
+            upgrade = True
+        elif arg == "--devel" or arg == "--devel=true":
+            devel = True
+        elif arg == "--devel=false":
+            devel = False
+        elif arg.startswith("-") and not arg.startswith("--"):
+            sync |= "S" in arg
+            upgrade |= "u" in arg
+    return sync and upgrade and devel
+
+
+def main(args):
+    result = subprocess.run(["/usr/bin/yay", *args]).returncode
+    if result == 0 and devel_upgrade(args):
+        return subprocess.run(["/usr/bin/serein-custom-update"]).returncode
+    return result
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

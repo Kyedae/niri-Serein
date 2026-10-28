@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Rebuild the local Serein package when upstream or a selected PR changes."""
+import argparse
+import fcntl
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+SOURCES = (
+    ("https://github.com/ViceVerse-cz/Serein.git", "main"),
+    ("https://github.com/Kyedae/niri-Serein.git", "fix/linux-global-mouse-keybinds"),
+    ("https://github.com/Kyedae/niri-Serein.git", "fix/screenshare-audio"),
+)
+DATA = Path("/usr/share/serein-custom-build")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true", help="check revisions without building")
+    parser.add_argument("--force", action="store_true", help="rebuild even if revisions match")
+    args = parser.parse_args()
+    latest = []
+    for url, branch in SOURCES:
+        result = subprocess.run(
+            ["git", "ls-remote", "--exit-code", url, f"refs/heads/{branch}"],
+            check=True, capture_output=True, text=True, timeout=45,
+        )
+        sha, ref = result.stdout.strip().split()
+        if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
+            raise RuntimeError(f"Invalid revision for {branch}")
+        if ref != f"refs/heads/{branch}":
+            raise RuntimeError(f"Unexpected ref for {branch}")
+        latest.append(sha)
+    installed = (DATA / "source-revisions").read_text().splitlines()
+    if latest == installed and not args.force:
+        print("Custom Serein is current (upstream + PRs #674 and #698).")
+        return 0
+    print("Custom Serein has an update (upstream or a selected PR changed).", flush=True)
+    if args.check:
+        return 0
+    cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    build = cache / "serein-custom-build"
+    build.mkdir(parents=True, exist_ok=True)
+    with (build / ".update.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        for name in ("PKGBUILD", "yay", "README.md"):
+            shutil.copy2(DATA / name, build / name)
+        shutil.copy2(Path(__file__).resolve(), build / "serein-custom-update")
+        return subprocess.run(
+            ["makepkg", "--syncdeps", "--install", "--force"], cwd=build,
+        ).returncode
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        print(f"Custom Serein update failed: {error}", file=sys.stderr)
+        sys.exit(1)

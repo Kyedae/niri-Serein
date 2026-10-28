@@ -1,0 +1,74 @@
+pkgname=serein-custom-git
+pkgver=0.1.0.r0
+pkgrel=1
+pkgdesc='Native Discord client, latest upstream with Kyedae PRs 674 and 698'
+arch=('x86_64')
+url='https://github.com/Kyedae/niri-Serein'
+license=('MIT' 'Apache-2.0')
+provides=('serein')
+conflicts=('serein' 'serein-bin' 'serein-git')
+depends=(alsa-lib dbus glib2 glibc gst-plugin-pipewire gst-plugins-base
+         gst-plugins-base-libs gst-plugins-good gstreamer gtk4 hicolor-icon-theme
+         libgcc libpulse libsoup3 libstdc++ libxkbcommon-x11 webkitgtk-6.0
+         xdg-desktop-portal python)
+makedepends=(cmake desktop-file-utils git pkgconf rustup)
+optdepends=('gnome-keyring: Secret Service credential provider'
+            'gst-plugins-bad: hardware screen encoding'
+            'gst-libav: inline video'
+            'xdg-desktop-portal-umbriel-git: screen sharing on Umbriel')
+options=('!debug' '!lto' '!strip')
+source=('serein-upstream::git+https://github.com/ViceVerse-cz/Serein.git#branch=main'
+        'serein-mouse::git+https://github.com/Kyedae/niri-Serein.git#branch=fix/linux-global-mouse-keybinds'
+        'serein-screen::git+https://github.com/Kyedae/niri-Serein.git#branch=fix/screenshare-audio')
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+prepare() {
+    cd "$srcdir/serein-upstream"
+    {
+        git rev-parse HEAD
+        git -C "$srcdir/serein-mouse" rev-parse HEAD
+        git -C "$srcdir/serein-screen" rev-parse HEAD
+    } > .serein-source-revisions
+    git rev-list --count HEAD > .serein-upstream-count
+    local patch
+    for patch in serein-mouse serein-screen; do
+        git fetch --no-tags "$srcdir/$patch" HEAD
+        git -c user.name='Serein local build' \
+            -c user.email='build@localhost' -c commit.gpgsign=false \
+            merge --no-edit FETCH_HEAD || {
+                error 'A custom PR conflicts with upstream; refusing to build without it.'
+                return 1
+            }
+    done
+}
+
+pkgver() {
+    cd "$srcdir/serein-upstream"
+    local upstream patches
+    upstream=$(head -c 8 .serein-source-revisions)
+    patches=$(sha256sum .serein-source-revisions)
+    printf '0.1.0.r%s.g%s.p%s' "$(cat .serein-upstream-count)" "$upstream" "${patches:0:8}"
+}
+
+build() {
+    cd "$srcdir/serein-upstream"
+    cargo xtask package --format dir
+}
+
+check() {
+    cd "$srcdir/serein-upstream"
+    cargo xtask check
+}
+
+package() {
+    cd "$srcdir/serein-upstream"
+    cp -a dist/linux-root/usr "$pkgdir/"
+    install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+    install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+    install -Dm644 .serein-source-revisions "$pkgdir/usr/share/serein-custom-build/source-revisions"
+    local file
+    for file in PKGBUILD yay README.md; do
+        install -Dm644 "$startdir/$file" "$pkgdir/usr/share/serein-custom-build/$file"
+    done
+    install -Dm755 "$startdir/serein-custom-update" "$pkgdir/usr/bin/serein-custom-update"
+}
