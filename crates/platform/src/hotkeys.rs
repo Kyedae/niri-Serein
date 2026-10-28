@@ -838,7 +838,7 @@ mod evdev {
 	use std::path::{Path, PathBuf};
 	use std::sync::{
 		Arc,
-		atomic::{AtomicBool, Ordering},
+		atomic::{AtomicBool, AtomicU8, Ordering},
 	};
 	use std::time::{Duration, Instant};
 
@@ -894,7 +894,7 @@ mod evdev {
 	pub(super) struct Poller {
 		stop: Arc<AtomicBool>,
 		thread: Option<std::thread::JoinHandle<()>>,
-		toggles: u8,
+		toggles: Arc<AtomicU8>,
 		readable: Arc<AtomicBool>,
 	}
 
@@ -908,13 +908,6 @@ mod evdev {
 			if watched.is_empty() {
 				return None;
 			}
-			let toggles = watched.iter().fold(0, |mask, (index, ..)| {
-				mask | match *index {
-					TOGGLE_MUTE => 1,
-					TOGGLE_DEAFEN => 2,
-					_ => 0,
-				}
-			});
 			let mut wanted: Vec<u16> = watched
 				.iter()
 				.flat_map(|(_, codes, _)| codes.iter().copied())
@@ -927,6 +920,8 @@ mod evdev {
 			scan(&wanted, &mut devices);
 			let readable = Arc::new(AtomicBool::new(buttons_readable(&devices, &watched)));
 			let worker_readable = readable.clone();
+			let toggles = Arc::new(AtomicU8::new(readable_toggles(&devices, &watched)));
+			let worker_toggles = toggles.clone();
 			let stop = Arc::new(AtomicBool::new(false));
 			let stopped = stop.clone();
 			let thread = std::thread::Builder::new()
@@ -962,6 +957,8 @@ mod evdev {
 								device += 1;
 							}
 						}
+						worker_toggles
+							.store(readable_toggles(&devices, &watched), Ordering::Relaxed);
 						worker_readable
 							.store(buttons_readable(&devices, &watched), Ordering::Relaxed);
 						std::thread::sleep(PERIOD);
@@ -978,7 +975,7 @@ mod evdev {
 
 		/// Mute/deafen bits this poller owns, so focused input does not toggle them twice.
 		pub(super) fn toggle_mask(&self) -> u8 {
-			if self.readable() { self.toggles } else { 0 }
+			self.toggles.load(Ordering::Relaxed)
 		}
 
 		/// Whether any input device with a bound button could be opened.
@@ -1081,6 +1078,23 @@ mod evdev {
 		})
 	}
 
+	fn readable_toggles(devices: &[Device], watched: &[Watched]) -> u8 {
+		watched.iter().fold(0, |mask, (index, codes, _)| {
+			if codes
+				.iter()
+				.any(|code| devices.iter().any(|device| device.keys.contains(code)))
+			{
+				mask | match *index {
+					TOGGLE_MUTE => 1,
+					TOGGLE_DEAFEN => 2,
+					_ => 0,
+				}
+			} else {
+				mask
+			}
+		})
+	}
+
 	fn apply_bindings(
 		devices: &[Device],
 		watched: &[Watched],
@@ -1153,6 +1167,13 @@ mod evdev {
 				(super::super::TOGGLE_MUTE, &[BTN_SIDE], 0),
 				(super::super::PUSH_TO_TALK, &[BTN_SIDE], 0),
 			];
+			assert_eq!(readable_toggles(&devices, watched), 1);
+			let partial: &[Watched] = &[
+				(TOGGLE_MUTE, &[BTN_SIDE], 0),
+				(TOGGLE_DEAFEN, &[BTN_EXTRA], 0),
+			];
+			assert!(!buttons_readable(&devices, partial));
+			assert_eq!(readable_toggles(&devices, partial), 1);
 			let mut held = [false; 2];
 			let mut event = [0; EVENT_SIZE];
 			let at = EVENT_SIZE - 8;
@@ -1173,6 +1194,7 @@ mod evdev {
 			event[at + 2..at + 4].copy_from_slice(&SYN_DROPPED.to_ne_bytes());
 			assert!(fold_event(&mut devices[0].held, &event, &[BTN_SIDE]).is_err());
 			devices.clear();
+			assert_eq!(readable_toggles(&devices, watched), 0);
 			apply_bindings(&devices, watched, &mut held, &native);
 			assert!(!native.ptt_down());
 		}
