@@ -62,7 +62,7 @@ check() {
 
 package() {
     cd "$srcdir/serein-upstream"
-    cp -a dist/linux-root/usr "$pkgdir/"
+    cp -a --no-preserve=ownership dist/linux-root/usr "$pkgdir/"
     install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
     install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
     install -Dm644 .serein-source-revisions "$pkgdir/usr/share/serein-custom-build/source-revisions"
