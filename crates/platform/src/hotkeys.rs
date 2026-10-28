@@ -978,7 +978,7 @@ mod evdev {
 			self.toggles.load(Ordering::Relaxed)
 		}
 
-		/// Whether any input device with a bound button could be opened.
+		/// Whether every bound mouse button has a readable input device.
 		pub(super) fn readable(&self) -> bool {
 			self.readable.load(Ordering::Relaxed)
 		}
