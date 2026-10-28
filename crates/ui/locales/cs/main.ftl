@@ -85,6 +85,7 @@ hide-chat = Skrýt chat
 show-chat = Zobrazit chat
 search-conversation = Hledat v této konverzaci
 show-member-list = Zobrazit seznam členů
+show-user-profile = Zobrazit profil uživatele
 pinned-messages = Připnuté zprávy
 threads = Vlákna
 
@@ -3518,6 +3519,9 @@ settings-storage-page-removes-cached-messages-and-media-drafts-and-your-login-st
 settings-storage-page-serein-does-not-collect-telemetry-or-upload-diagnostics-discord-retains = Serein neshromažďuje telemetrii ani nenahrává diagnostiku. Discord uchovává data na straně služeb podle svých vlastních zásad.
 # Context: storage_page
 settings-storage-page-your-privacy = Vaše soukromí
+settings-storage-page-saved-login = Uložené přihlášení
+settings-storage-page-plaintext-login = Ukládat přihlášení jako prostý text bez klíčenky
+settings-storage-page-plaintext-login-description = Použije se jen tehdy, když nefunguje žádná klíčenka systému (GNOME Keyring, KWallet, Klíčenka ani Správce přihlašovacích údajů). Token se uloží nešifrovaně do soukromého souboru ve složce dat Sereinu, kde ho může přečíst kdokoli s přístupem k vašemu uživatelskému účtu. Vypnutím se tyto soubory smažou.
 # Context: cosmetic_settings
 settings-cosmetics = Kosmetika profilu
 # Context: cosmetic_settings
@@ -4031,6 +4035,8 @@ user-menu-contents-private-nicknames-are-available-for-confirmed-friends = Pro p
 user-menu-contents-profile = Profil
 # Context: contents
 user-menu-contents-remove-this-conversation-from-your-dm-list-messages-are-kept = Odeberte tuto konverzaci ze seznamu DM. Zprávy se uchovávají.
+# Context: contents
+user-menu-contents-roles = Role
 # Context: contents
 user-menu-contents-unblock = Odblokovat
 # Context: contents
@@ -4819,6 +4825,8 @@ composer-placeholder-direct = Zpráva pro @{ $name }
 
 # Context: timeline_dm_intro
 timeline-dm-intro = Toto je začátek vaší historie přímých zpráv s uživatelem { $name }.
+# Context: timeline_group_intro
+timeline-group-intro = Vítejte na začátku skupiny { $name }.
 
 # Context: timeline_channel_intro
 timeline-channel-intro-title = Vítejte v #{ $channel }!
@@ -4913,3 +4921,12 @@ search-overlays-no-matching-content-types = Žádné odpovídající typy obsahu
 search-overlays-history = Historie
 search-overlays-clear-history = Vymazat historii hledání
 main-sign-in-rate-limited-detail = Discord omezuje toto přihlášení. Než to zkusíte znovu, počkejte. Dřívější pokus může čekání prodloužit.
+
+# New message
+new-message-title = Nová zpráva
+new-message-subtitle = Skupinové DM mohou mít až 10 členů.
+new-message-search = Hledat
+new-message-hint = Přidejte přátele a začněte přímou zprávu nebo skupinu.
+new-message-no-people-found = Nikdo neodpovídá hledání.
+new-message-create = Vytvořit zprávu
+new-message-cancel = Zrušit
